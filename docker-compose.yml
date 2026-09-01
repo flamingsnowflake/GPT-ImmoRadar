@@ -1,0 +1,77 @@
+services:
+  monitor:
+    build: .
+    container_name: immobilien-monitor
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./app:/app
+      - ./data:/data
+      - ./config:/config:ro
+      - ./osm:/osm:ro
+      - ./private/telegram-preview:/telegram-preview
+
+    working_dir: /app
+
+    command: python monitor.py
+
+
+  telegram-commands:
+    build: .
+    container_name: immobilien-telegram
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./app:/app
+      - ./data:/data
+      - ./config:/config
+      - ./osm:/osm:ro
+      - ./private/telegram-preview:/telegram-preview
+
+    working_dir: /app
+
+    command: python telegram_commands.py
+
+  property-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+
+    container_name: immobilien-browser
+    restart: unless-stopped
+
+    volumes:
+      - ./app:/app:ro
+
+    working_dir: /app
+
+    command: python browser_service.py
+
+    shm_size: "1gb"
+
+
+  energy-api:
+    build: .
+    container_name: immobilien-energy-api
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./app:/app
+      - ./data:/data
+      - ./config:/config:ro
+
+    working_dir: /app
+
+    command: python energy_api.py
+
+    ports:
+      - "${ENERGY_API_BIND:-127.0.0.1}:${ENERGY_API_PORT:-8090}:8090"

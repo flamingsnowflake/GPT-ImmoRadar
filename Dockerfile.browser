@@ -1,0 +1,8 @@
+FROM python:3.13-slim
+
+RUN pip install --no-cache-dir playwright \
+    && playwright install --with-deps chromium
+
+WORKDIR /app
+
+CMD ["python", "browser_service.py"]

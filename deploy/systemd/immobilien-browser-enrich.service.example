@@ -1,0 +1,18 @@
+[Unit]
+Description=Immobilien Monitor Browser Enrichment
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=immomonitor
+Group=immomonitor
+WorkingDirectory=/opt/immobilien-monitor
+ExecStart=/usr/bin/python3 /opt/immobilien-monitor/app/browser_enrich_server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

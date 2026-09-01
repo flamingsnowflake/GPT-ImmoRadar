@@ -1,0 +1,35 @@
+searches:
+  "201749106": land
+  "201749120": land
+  "201749137": house
+  "201749162": farm
+
+keywords:
+
+  land:
+    - baugrundstück
+    - grundstück zum kauf
+    - bauland
+    - wohnbaugrundstück
+    - bauträgerfrei
+    - grundstück
+    - baulücke
+    - grundstück
+
+  farm:
+    - resthof
+    - bauernhof
+    - hofstelle
+    - vierseitenhof
+    - dreiseitenhof
+    - landwirtschaftlicher hof
+    - ehemaliger bauernhof
+    - gehöft
+
+  house:
+    - einfamilienhaus
+    - doppelhaushälfte
+    - wohnhaus
+    - bungalow
+    - zweifamilienhaus
+    - reihenhaus

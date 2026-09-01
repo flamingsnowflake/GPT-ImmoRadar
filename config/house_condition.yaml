@@ -1,0 +1,63 @@
+classes:
+
+  dilapidated:
+    - abriss
+    - abrissreif
+    - abbruchreif
+    - abbruchobjekt
+    - einsturzgefährdet
+    - ruine
+    - ruinös
+    - stark baufällig
+
+  major_renovation:
+    - kernsanierungsbedürftig
+    - kernsanierung erforderlich
+    - umfassend sanierungsbedürftig
+    - stark sanierungsbedürftig
+    - sanierungsstau
+    - baufällig
+
+  renovation_needed:
+    - sanierungsbedürftig
+    - renovierungsbedürftig
+    - renovierungsbedarf
+    - sanierungsbedarf
+    - modernisierungsbedürftig
+    - modernisierungsbedarf
+    - handwerkerobjekt
+    - heimwerkerobjekt
+    - handwerklichem geschick
+    - handwerkliches geschick
+    - geschickte selbermacher
+    - geschickten selbermacher
+    - handwerkerhände
+
+  cosmetic_renovation:
+    - teilweise renovierungsbedürftig
+    - renovierungsarbeiten erforderlich
+    - renovierung erforderlich
+    - teilsaniert
+    - teilmodernisiert
+
+  maintained:
+    - gepflegter zustand
+    - gepflegt
+    - laufend instand gehalten
+    - instand gehalten
+
+  good:
+    - sehr guter zustand
+    - guter zustand
+    - umfassend modernisiert
+    - vollständig modernisiert
+    - vollständig saniert
+    - kernsaniert
+    - modernisiert
+    - saniert
+
+  turnkey:
+    - bezugsfertig
+    - bezugsbereit
+    - neuwertig
+    - erstbezug
