@@ -1,19 +1,19 @@
 # Public export manifest
 
-Generated from private source commit:
+Generated from private production commit:
 
 ```text
-7021dc0593b8315dda46f1ac1f01114b1a8284b9
+c7f2ea7b1a4bde43da673cd46122a65886e62427
 ```
 
 Generated at:
 
 ```text
-2026-09-01T12:37:18.151121+00:00
+2026-09-02T10:12:09.338172+00:00
 ```
 
 This directory intentionally contains **no Git history** from the private production repository.
 
-Production databases, credentials, sessions, private deployment captures, the production userscript archive and production-derived regression fixtures are intentionally excluded.
+Production `score.yaml` and `blacklist.yaml` are not exported; generic public examples are installed instead.
 
 Before publication, run an independent secret scanner and manual review as described in `docs/public-release.md`.

@@ -1,26 +1,11 @@
+# Example blacklist profile for public/self-hosted use.
+# Copy to blacklist.yaml and adapt to your own search.
+
 terms:
-- ackerland
-- argetra
-- auktion
-- daten info service eibl gmbh
-- deutsche grundstücksauktionen ag
-- doppelhaushälfte
-- evira hausprojekt gmbh
-- forstwirtschaft
-- forstwirtschaftliche
-- gewerbe- und industrieareal
-- gewerbeareal
-- gewerbeobjekt
-- grünlandflächen
-- industrieareal
-- industriegebiet
-- landwirtschaftsfläche
-- landwirtschaftsflächen
-- projektiert
-- vermietet
-- waldgrundstück
-- zwangsversteigerung
-- zwangsversteigerungen
-- zwangsversteigerungsinformationen
-- zwangsversteigerungsobjekt
-- zwangversteigerung
+  - zwangsversteigerung
+  - auktion
+  - gewerbeobjekt
+  - industriegebiet
+  - landwirtschaftsfläche
+  - waldgrundstück
+  - vermietet

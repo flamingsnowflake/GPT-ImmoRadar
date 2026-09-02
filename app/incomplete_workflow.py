@@ -8,6 +8,12 @@ from user_status import (
 from browser_condition_hints import (
     condition_lab_hints,
 )
+from geo_precision import (
+    GEO_PRECISION_EXACT,
+    GEO_PRECISION_LOCALITY,
+    effective_geo_precision,
+    provisional_score_range,
+)
 
 
 CONDITION_BUTTONS = (
@@ -78,7 +84,7 @@ def _score_details(value):
     return data if isinstance(data, dict) else {}
 
 
-def _missing_reasons(row):
+def _missing_reasons_base(row):
 
     details = _score_details(
         row.get("score_details")
@@ -96,6 +102,116 @@ def _missing_reasons(row):
         for reason in reasons
         if reason
     }
+
+
+def _row_value(
+    row,
+    key,
+):
+
+    if hasattr(
+        row,
+        "get",
+    ):
+        return row.get(
+            key
+        )
+
+    try:
+        return row[
+            key
+        ]
+
+    except (
+        KeyError,
+        IndexError,
+        TypeError,
+    ):
+        return None
+
+
+def _rail_fallback_available(
+    row,
+):
+
+    if not _row_value(
+        row,
+        "noise_checked_at",
+    ):
+        return False
+
+    # Kartierte Werte:
+    # kein Fallback notwendig.
+    if (
+        _row_value(
+            row,
+            "rail_lden",
+        )
+        is not None
+        or _row_value(
+            row,
+            "rail_lnight",
+        )
+        is not None
+    ):
+        return False
+
+    distance_value = _row_value(
+        row,
+        "rail_distance_m",
+    )
+
+    traffic_value = _row_value(
+        row,
+        "rail_annual_traffic",
+    )
+
+    if (
+        distance_value is None
+        or traffic_value is None
+    ):
+        return False
+
+    try:
+        distance = float(
+            distance_value
+        )
+
+        annual_traffic = float(
+            traffic_value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
+
+    return (
+        0 <= distance <= 1000
+        and annual_traffic >= 0
+    )
+
+
+def _missing_reasons(
+    row,
+):
+
+    missing = set(
+        _missing_reasons_base(
+            row
+        )
+    )
+
+    if _rail_fallback_available(
+        row
+    ):
+        missing.discard(
+            "Lärm"
+        )
+
+    return missing
+
 
 
 def get_incomplete_rows(db_path):
@@ -150,6 +266,24 @@ def _condition_unknown(row):
 
 
 def _geo_missing(row):
+
+    precision = effective_geo_precision(
+        row
+    )
+
+    if precision == GEO_PRECISION_LOCALITY:
+        return set()
+
+    # Dieses Labor kann nur eine fehlende genaue Lage lösen.
+    # Sind verifizierte Koordinaten vorhanden, darf ein
+    # technischer Fehler bei Wasser, Nachbarn oder Lärm nicht
+    # erneut zur Eingabe derselben Adresse auffordern.
+    if (
+        precision == GEO_PRECISION_EXACT
+        and row.get("latitude") is not None
+        and row.get("longitude") is not None
+    ):
+        return set()
 
     return _missing_reasons(
         row
@@ -228,6 +362,69 @@ def geo_rows(db_path):
     ]
 
 
+def locality_rows(db_path):
+
+    ensure_user_status_table(
+        db_path
+    )
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.*
+            FROM properties AS p
+            LEFT JOIN property_user_status AS us
+              ON us.portal_id = p.portal_id
+            WHERE p.geo_precision = 'locality'
+              AND p.rating = 'provisional'
+              AND COALESCE(p.is_ko, 0) = 0
+              AND COALESCE(us.status, 'active') = 'active'
+              AND p.id = (
+                  SELECT p2.id
+                  FROM properties AS p2
+                  WHERE p2.portal = p.portal
+                    AND p2.portal_id = p.portal_id
+                  ORDER BY
+                      p2.last_seen DESC,
+                      p2.id DESC
+                  LIMIT 1
+              )
+            ORDER BY
+                p.last_seen DESC,
+                p.id DESC
+            """
+        ).fetchall()
+
+    finally:
+        conn.close()
+
+    result = [
+        dict(row)
+        for row in rows
+    ]
+
+    # Für das Nachfragen zuerst die Objekte mit dem größten
+    # möglichen Nutzen einer genauen Adresse zeigen.
+    result.sort(
+        key=lambda row: (
+            (
+                provisional_score_range(row)
+                or (-1, -1)
+            )[1],
+            (
+                provisional_score_range(row)
+                or (-1, -1)
+            )[0],
+        ),
+        reverse=True,
+    )
+
+    return result
+
+
 def stats(db_path):
 
     rows = get_incomplete_rows(db_path)
@@ -240,6 +437,9 @@ def stats(db_path):
         "Wohnfläche": 0,
         "Grundstück": 0,
         "Geo": 0,
+        "Lage präzisieren": len(
+            locality_rows(db_path)
+        ),
     }
 
     for row in rows:
@@ -253,7 +453,11 @@ def stats(db_path):
         ):
             result["Energie"] += 1
 
-        if _condition_unknown(row):
+        if (
+            row.get("property_type")
+            in ("house", "farm")
+            and _condition_unknown(row)
+        ):
             result["Zustand"] += 1
 
         if row.get("price") is None:
@@ -265,9 +469,7 @@ def stats(db_path):
         if "Grundstück" in missing:
             result["Grundstück"] += 1
 
-        if missing.intersection(
-            GEO_REASONS
-        ):
+        if _geo_missing(row):
             result["Geo"] += 1
 
     return result
@@ -277,7 +479,10 @@ def overview_text(db_path):
 
     current = stats(db_path)
 
-    if current["Objekte"] == 0:
+    if (
+        current["Objekte"] == 0
+        and current["Lage präzisieren"] == 0
+    ):
         return (
             "✅ Keine unvollständigen "
             "Objekte mehr."
@@ -297,6 +502,10 @@ def overview_text(db_path):
         "",
         "Das Labor zeigt nur Aufgaben, "
         "die wirklich noch offen sind.",
+        "",
+        "Optional:",
+        "📌 Lage präzisieren: "
+        f"{current['Lage präzisieren']}",
     ]
 
     return "\n".join(lines)
@@ -343,6 +552,19 @@ def overview_keyboard(db_path):
                         f"({current['Geo']})"
                     ),
                     "callback_data": "iw:geo",
+                }
+            ]
+        )
+
+    if current["Lage präzisieren"]:
+        rows.append(
+            [
+                {
+                    "text": (
+                        "📌 Lage präzisieren "
+                        f"({current['Lage präzisieren']})"
+                    ),
+                    "callback_data": "iw:locality",
                 }
             ]
         )
@@ -736,6 +958,95 @@ def geo_keyboard(row):
     }
 
 
+def locality_text(row, position, total):
+
+    title = (
+        row.get("title")
+        or row.get("portal_id")
+        or "(ohne Titel)"
+    )
+
+    location = (
+        row.get("location")
+        or "(Ort unbekannt)"
+    )
+
+    score_range = provisional_score_range(
+        row
+    )
+
+    lines = [
+        f"📌 LAGE PRÄZISIEREN · {position}/{total}",
+        "",
+        title,
+        f"📍 Portal-Ort: {location}",
+    ]
+
+    if score_range is not None:
+        lines.extend(
+            [
+                "⭐ Vorläufig: "
+                f"{score_range[0]}–{score_range[1]} Punkte",
+            ]
+        )
+
+    if row.get("url"):
+        lines.extend(
+            [
+                "",
+                row["url"],
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "Die genaue Lage ist noch unbekannt. Der Bereich "
+            "zeigt den schlechtesten und besten möglichen "
+            "Ausgang für Wasser, Nachbarn und Lärm.",
+            "",
+            "Wenn du die Adresse sicher erfahren hast, kannst "
+            "du sie hier eintragen und erhältst den exakten "
+            "Geo-Score.",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def locality_keyboard(row):
+
+    portal_id = str(
+        row.get("portal_id")
+        or ""
+    )
+
+    property_type = str(
+        row.get("property_type")
+        or "unknown"
+    )
+
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "📍 Adresse/Koordinaten setzen",
+                    "callback_data": (
+                        f"coords_set:{portal_id}:"
+                        f"{property_type}:iwl"
+                    ),
+                }
+            ],
+            [
+                {
+                    "text": "⬅️ Labor",
+                    "callback_data": "iw:menu",
+                }
+            ],
+        ]
+    }
+
+
 def first_condition(db_path):
 
     rows = condition_rows(db_path)
@@ -759,6 +1070,16 @@ def first_energy(db_path):
 def first_geo(db_path):
 
     rows = geo_rows(db_path)
+
+    if not rows:
+        return None, 0
+
+    return rows[0], len(rows)
+
+
+def first_locality(db_path):
+
+    rows = locality_rows(db_path)
 
     if not rows:
         return None, 0

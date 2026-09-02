@@ -1,4 +1,11 @@
 from config_loader import CONFIG
+from geo_precision import (
+    GEO_INCOMPLETE_REASONS,
+    GEO_PRECISION_LOCALITY,
+    GEO_PRECISION_MISSING,
+    clear_geo_derived_data,
+    effective_geo_precision,
+)
 
 
 def price_points(price, config):
@@ -360,6 +367,247 @@ def _noise_penalty_for_value(
     return 0
 
 
+UNMAPPED_RAIL_REVIEW_DISTANCE_M = 500.0
+
+
+def _unmapped_nearby_rail_reason(
+    property_data,
+):
+
+    rail_distance = property_data.get(
+        "rail_distance_m"
+    )
+
+    rail_lden = property_data.get(
+        "rail_lden"
+    )
+
+    rail_lnight = property_data.get(
+        "rail_lnight"
+    )
+
+    if rail_distance is None:
+        return None
+
+    try:
+        rail_distance = float(
+            rail_distance
+        )
+    except (TypeError, ValueError):
+        return None
+
+    # Es existiert eine Bahn in relevanter Nähe,
+    # aber keine kartierte EBA-Isophone am Objekt.
+    #
+    # Das darf nicht als "ruhig" interpretiert werden.
+    if (
+        rail_distance
+        <= UNMAPPED_RAIL_REVIEW_DISTANCE_M
+        and rail_lden is None
+        and rail_lnight is None
+    ):
+
+        annual_traffic = property_data.get(
+            "rail_annual_traffic"
+        )
+
+        text = (
+            "Bahn "
+            f"{rail_distance:.0f} m entfernt, "
+            "aber keine kartierte "
+            "EBA-Lärmisophone"
+        )
+
+        if annual_traffic is not None:
+
+            try:
+
+                annual_traffic = float(
+                    annual_traffic
+                )
+
+                trains_per_day = (
+                    annual_traffic / 365.0
+                )
+
+                text += (
+                    "; "
+                    f"{annual_traffic:.0f} Züge/Jahr "
+                    f"(~{trains_per_day:.1f}/Tag)"
+                )
+
+            except (TypeError, ValueError):
+                pass
+
+        return text
+
+    return None
+
+
+def _rail_fallback_penalty(
+    property_data,
+    object_type,
+):
+    """
+    Konservativer Ersatzwert für Bahnstrecken,
+    wenn die EBA-Prüfung abgeschlossen ist,
+    aber keine kartierte Isophone vorhanden ist.
+
+    WICHTIG:
+    - kartierte LDEN/LNight-Werte haben immer Vorrang
+    - nur bei vorhandener Entfernung UND Zugzahl
+    - Ersatzwert erzeugt niemals automatisch ein KO
+    """
+
+    if not property_data.get(
+        "noise_checked_at"
+    ):
+        return None
+
+    # Kartierte EBA-Werte haben immer Vorrang.
+    if (
+        property_data.get("rail_lden")
+        is not None
+        or property_data.get("rail_lnight")
+        is not None
+    ):
+        return None
+
+    distance_value = property_data.get(
+        "rail_distance_m"
+    )
+
+    traffic_value = property_data.get(
+        "rail_annual_traffic"
+    )
+
+    if (
+        distance_value is None
+        or traffic_value is None
+    ):
+        return None
+
+    try:
+        distance = float(
+            distance_value
+        )
+
+        annual_traffic = float(
+            traffic_value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if (
+        distance < 0
+        or distance > 1000
+        or annual_traffic < 0
+    ):
+        return None
+
+    # --------------------------------------------------------
+    # Ersatzmatrix für bestehende Häuser
+    #
+    # Distanz ist die zweite Dimension innerhalb der
+    # Verkehrsmenge.
+    #
+    # Wimmelburg:
+    #   18.738 Züge/Jahr
+    #   360 m
+    #   => -5
+    # --------------------------------------------------------
+
+    if annual_traffic <= 0:
+
+        bands = (
+            (1000, 0),
+        )
+
+    elif annual_traffic < 1000:
+
+        bands = (
+            (50, -2),
+            (100, -1),
+            (1000, 0),
+        )
+
+    elif annual_traffic < 5000:
+
+        bands = (
+            (50, -5),
+            (100, -4),
+            (250, -2),
+            (500, -1),
+            (1000, 0),
+        )
+
+    elif annual_traffic < 15000:
+
+        bands = (
+            (50, -8),
+            (100, -6),
+            (250, -4),
+            (500, -2),
+            (1000, -1),
+        )
+
+    elif annual_traffic < 30000:
+
+        bands = (
+            (50, -11),
+            (100, -9),
+            (250, -7),
+            (500, -5),
+            (1000, -2),
+        )
+
+    else:
+
+        bands = (
+            (50, -14),
+            (100, -11),
+            (250, -9),
+            (500, -7),
+            (1000, -3),
+        )
+
+    house_penalty = 0
+
+    for (
+        maximum_distance,
+        penalty,
+    ) in bands:
+
+        if distance <= maximum_distance:
+            house_penalty = penalty
+            break
+
+    # Grundstücke werden wie bisher strenger bewertet.
+    if object_type == "land":
+        penalty = (
+            house_penalty * 2
+        )
+    else:
+        penalty = house_penalty
+
+    penalty = max(
+        NOISE_RULES[
+            object_type
+        ]["cap"],
+        penalty,
+    )
+
+    return (
+        int(penalty),
+        distance,
+        annual_traffic,
+    )
+
+
 def noise_effect(
     property_data,
     object_type,
@@ -391,11 +639,58 @@ def noise_effect(
             f"{source}_lnight"
         )
 
+        # ----------------------------------------------------
+        # Keine kartierten Pegel
+        #
+        # Nur bei Bahn darf hier der explizite Ersatzwert
+        # greifen. Straße und Flug bleiben unverändert.
+        # ----------------------------------------------------
+
         if (
             lden is None
             and lnight is None
         ):
+
+            if source == "rail":
+
+                fallback = (
+                    _rail_fallback_penalty(
+                        property_data,
+                        object_type,
+                    )
+                )
+
+                if fallback is not None:
+
+                    (
+                        source_penalty,
+                        distance,
+                        annual_traffic,
+                    ) = fallback
+
+                    total_penalty += (
+                        source_penalty
+                    )
+
+                    traffic_text = (
+                        f"{annual_traffic:,.0f}"
+                        .replace(",", ".")
+                    )
+
+                    details.append(
+                        "Schiene Ersatzwert "
+                        f"{distance:.0f} m / "
+                        f"{traffic_text} Züge/Jahr "
+                        f"({source_penalty:+d}; "
+                        "keine EBA-Isophone)"
+                    )
+
             continue
+
+        # ----------------------------------------------------
+        # Kartierte Werte:
+        # bestehende Logik unverändert
+        # ----------------------------------------------------
 
         ko = False
 
@@ -451,8 +746,6 @@ def noise_effect(
         )
 
         # Die jeweils schlechtere Bewertung gewinnt.
-        # Da die Maluswerte negativ sind, ist min()
-        # die strengere der beiden Bewertungen.
         source_penalty = min(
             lden_penalty,
             lnight_penalty,
@@ -485,7 +778,7 @@ def noise_effect(
             )
 
     # Mehrere Quellen dürfen sich summieren,
-    # aber der gesamte Malus ist gedeckelt.
+    # der Gesamtmalus bleibt aber gedeckelt.
     total_penalty = max(
         rules["cap"],
         total_penalty,
@@ -513,6 +806,159 @@ def noise_effect(
     )
 
 
+
+def _provisional_variants(
+    property_data,
+    object_type,
+    neighbour_values,
+):
+
+    low = dict(property_data)
+    high = dict(property_data)
+
+    for candidate in (low, high):
+        clear_geo_derived_data(candidate)
+        candidate["geo_precision"] = "exact"
+        candidate["_geo_precision_bypass"] = True
+        candidate["noise_checked_at"] = "PROVISIONAL"
+        candidate["rail_distance_m"] = None
+
+    if neighbour_values:
+        low["neighbour_class"] = min(
+            neighbour_values,
+            key=neighbour_values.get,
+        )
+        high["neighbour_class"] = max(
+            neighbour_values,
+            key=neighbour_values.get,
+        )
+    else:
+        low["neighbour_class"] = "dense"
+        high["neighbour_class"] = "isolated"
+
+    low["neighbour_checked_at"] = "PROVISIONAL"
+    high["neighbour_checked_at"] = "PROVISIONAL"
+
+    low["water_score"] = 0
+    high["water_score"] = 20
+
+    if object_type == "land":
+        low["rail_lden"] = 65
+        low["road_lden"] = 65
+    else:
+        low["rail_lden"] = 70
+        low["road_lden"] = 70
+
+    return low, high
+
+
+def _non_geo_reasons(reasons, object_type):
+
+    prefixes = (
+        (
+            "Wasser:",
+            "Nachbarn:",
+            "Lärm:",
+        )
+        if object_type == "land"
+        else (
+            "Freilage/Nachbarn:",
+            "Ruhe:",
+            "Wasser:",
+        )
+    )
+
+    return [
+        reason
+        for reason in reasons
+        if not str(reason).startswith(prefixes)
+    ]
+
+
+def _provisional_result(
+    low_result,
+    high_result,
+    object_type,
+    thresholds,
+):
+
+    if low_result.get("ko"):
+        return low_result
+
+    if high_result.get("ko"):
+        return high_result
+
+    incomplete = sorted(
+        {
+            str(reason)
+            for result in (
+                low_result,
+                high_result,
+            )
+            for reason in result.get(
+                "incomplete_reasons",
+                [],
+            )
+            if reason not in GEO_INCOMPLETE_REASONS
+        }
+    )
+
+    reasons = _non_geo_reasons(
+        low_result.get("reasons", []),
+        object_type,
+    )
+
+    if incomplete:
+        reasons.append(
+            "Geo: Lage nur auf Ortsebene bekannt; "
+            "Geo-Punkte werden nicht vergeben"
+        )
+
+        return {
+            "ko": False,
+            "score": None,
+            "rating": "incomplete",
+            "reasons": reasons,
+            "ko_reasons": [],
+            "incomplete_reasons": incomplete,
+            "geo_precision": GEO_PRECISION_LOCALITY,
+        }
+
+    scores = (
+        int(low_result["score"]),
+        int(high_result["score"]),
+    )
+
+    score_min = min(scores)
+    score_max = max(scores)
+
+    reasons.append(
+        "Geo: Lage nur auf Ortsebene bekannt; "
+        f"vorläufig {score_min}–{score_max} Punkte"
+    )
+
+    return {
+        "ko": False,
+        "score": None,
+        "rating": "provisional",
+        "reasons": reasons,
+        "ko_reasons": [],
+        "incomplete_reasons": [],
+        "provisional": True,
+        "score_min": score_min,
+        "score_max": score_max,
+        "rating_min": classify_score(
+            score_min,
+            thresholds,
+        ),
+        "rating_max": classify_score(
+            score_max,
+            thresholds,
+        ),
+        "geo_precision": GEO_PRECISION_LOCALITY,
+    }
+
+
 def score_land(property_data):
 
     config = (
@@ -531,8 +977,41 @@ def score_land(property_data):
         {}
     )
 
+    if not property_data.get(
+        "_geo_precision_bypass"
+    ):
+        geo_precision = (
+            property_data.get("geo_precision")
+            or effective_geo_precision(property_data)
+        )
+
+        if geo_precision == GEO_PRECISION_LOCALITY:
+            low, high = _provisional_variants(
+                property_data,
+                "land",
+                scoring.get(
+                    "neighbours",
+                    {},
+                ).get("values", {}),
+            )
+
+            return _provisional_result(
+                score_land(low),
+                score_land(high),
+                "land",
+                config.get("thresholds", {}),
+            )
+
+        if geo_precision == GEO_PRECISION_MISSING:
+            property_data = dict(property_data)
+            clear_geo_derived_data(property_data)
+            property_data[
+                "_geo_precision_bypass"
+            ] = True
+
     reasons = []
     ko_reasons = []
+    incomplete_reasons = []
 
     plot_area = property_data.get(
         "plot_area"
@@ -605,6 +1084,61 @@ def score_land(property_data):
             "rating": "ko",
             "reasons": reasons,
             "ko_reasons": ko_reasons
+        }
+
+
+    # --------------------------------
+    # VOLLSTÄNDIGKEIT
+    # --------------------------------
+
+    if (
+        property_data.get(
+            "water_score"
+        ) is None
+        and property_data.get(
+            "water_distance_km"
+        ) is None
+    ):
+        incomplete_reasons.append(
+            "Wasser"
+        )
+
+    neighbour_class_for_check = str(
+        property_data.get(
+            "neighbour_class"
+        )
+        or "unknown"
+    ).strip().lower()
+
+    if neighbour_class_for_check == "unknown":
+        incomplete_reasons.append(
+            "Freilage/Nachbarn"
+        )
+
+    if property_data.get(
+        "noise_checked_at"
+    ) is None:
+        incomplete_reasons.append(
+            "Lärm"
+        )
+
+    elif _unmapped_nearby_rail_reason(
+        property_data
+    ):
+        incomplete_reasons.append(
+            "Lärm"
+        )
+
+    if incomplete_reasons:
+
+        return {
+            "ko": False,
+            "score": None,
+            "rating": "incomplete",
+            "reasons": reasons,
+            "ko_reasons": [],
+            "incomplete_reasons":
+                incomplete_reasons,
         }
 
 
@@ -1134,6 +1668,46 @@ def score_house(property_data, ignore_search_limits=False):
         {},
     )
 
+    if not property_data.get(
+        "_geo_precision_bypass"
+    ):
+        geo_precision = (
+            property_data.get("geo_precision")
+            or effective_geo_precision(property_data)
+        )
+
+        if geo_precision == GEO_PRECISION_LOCALITY:
+            low, high = _provisional_variants(
+                property_data,
+                "house",
+                scoring.get(
+                    "neighbours",
+                    {},
+                ).get("values", {}),
+            )
+
+            return _provisional_result(
+                score_house(
+                    low,
+                    ignore_search_limits=
+                        ignore_search_limits,
+                ),
+                score_house(
+                    high,
+                    ignore_search_limits=
+                        ignore_search_limits,
+                ),
+                "house",
+                config.get("thresholds", {}),
+            )
+
+        if geo_precision == GEO_PRECISION_MISSING:
+            property_data = dict(property_data)
+            clear_geo_derived_data(property_data)
+            property_data[
+                "_geo_precision_bypass"
+            ] = True
+
     reasons = []
     ko_reasons = []
     incomplete_reasons = []
@@ -1204,6 +1778,13 @@ def score_house(property_data, ignore_search_limits=False):
     if property_data.get(
         "noise_checked_at"
     ) is None:
+        incomplete_reasons.append(
+            "Lärm"
+        )
+
+    elif _unmapped_nearby_rail_reason(
+        property_data
+    ):
         incomplete_reasons.append(
             "Lärm"
         )
@@ -1675,6 +2256,22 @@ def score_house(property_data, ignore_search_limits=False):
     # ========================================================
     # ABSCHLUSS
     # ========================================================
+
+    # Rail-Fallback gilt als abgeschlossene Lärmprüfung.
+    # EBA-Isophonen haben weiterhin Vorrang; der Helper
+    # liefert nur dann einen Ersatzwert, wenn keine
+    # kartierten Bahnpegel vorhanden sind und Entfernung
+    # plus Jahresverkehr bekannt sind.
+    if (
+        "Lärm" in incomplete_reasons
+        and _rail_fallback_penalty(
+            property_data,
+            "house",
+        ) is not None
+    ):
+        incomplete_reasons.remove(
+            "Lärm"
+        )
 
     if incomplete_reasons:
 

@@ -1,21 +1,21 @@
-# Installation
+# Installation (reference deployment)
 
-This document describes the reference self-hosted architecture. It is intentionally explicit about the moving parts so a fork can adapt them to a different server, reverse proxy or property-search workflow.
+This document describes the current reference architecture. A future public release should automate more of these steps, but keeping the dependencies explicit is useful for operators and contributors.
 
 ## Requirements
 
-- Linux host (reference development environment: Ubuntu 24.04 LTS)
+- Linux host (reference deployment: Ubuntu 24.04 LTS)
 - Docker Engine + Docker Compose plugin
 - Python 3 for the host browser-enrichment service
 - SQLite
 - a Telegram bot/chat
 - an IMAP mailbox receiving property alerts
-- optional HTTPS reverse proxy for browser enrichment and the Energy API
+- optional reverse proxy/TLS endpoint for browser enrichment and Energy API
 - Tampermonkey-compatible browser for browser-only enrichment
 
 ## Checkout
 
-A convenient reference path is:
+Recommended reference path:
 
 ```bash
 sudo mkdir -p /opt/immobilien-monitor
@@ -23,7 +23,7 @@ sudo chown "$USER":"$USER" /opt/immobilien-monitor
 cd /opt/immobilien-monitor
 ```
 
-Clone the public repository into that directory or adjust the paths in your deployment accordingly.
+Clone/copy the source into that directory.
 
 ## Environment
 
@@ -35,7 +35,7 @@ cp .env.example .env
 
 Never commit the filled `.env`.
 
-At minimum, configure the Telegram bot and IMAP mailbox used by your installation.
+At minimum the running stack needs the Telegram and IMAP configuration used by your deployment. Energy/browser tokens are separate secrets.
 
 ## Browser enrichment token
 
@@ -50,7 +50,7 @@ print(secrets.token_urlsafe(48))
 PY
 ```
 
-The real token file is runtime secret material and should remain ignored by Git.
+The token file is ignored by Git.
 
 ## Docker services
 
@@ -75,7 +75,7 @@ property-browser
 energy-api
 ```
 
-## Host browser-enrichment service
+## Host browser enrichment service
 
 Copy/customize the generic unit:
 
@@ -103,57 +103,47 @@ sudo systemctl status \
     --no-pager
 ```
 
-Keep the application listener on localhost or another trusted/private interface.
+The application binds to localhost on the reference port. Do not expose it directly without authentication/network controls.
 
 ## Reverse proxy
 
-For browser enrichment from another machine, put an HTTPS reverse proxy in front of the local application listener.
+The production architecture maps an authenticated HTTPS route such as `/browser-enrich` to the localhost browser enrichment service.
 
-A generic Apache example is included at:
+Reverse-proxy implementation is intentionally not hard-coded in the project because hostnames/certificates/network topology are deployment-specific.
 
-```text
-deploy/apache/immoradar.example.conf
-```
-
-The important principles are:
+Keep these principles:
 
 - TLS for remote browser access;
-- expose only the required routes;
-- keep upstream services on localhost/private interfaces;
-- retain application-token authentication;
+- only forward the required route;
+- keep the upstream bound to localhost/private interface;
+- require the browser-enrichment token at application level;
 - avoid logging sensitive request bodies.
-
-See `docs/apache-reverse-proxy.md`.
 
 ## Tampermonkey
 
-Install:
+The private production repo archives the exact tested 1.3.1 userscript. Public exports generate a sanitized copy.
 
-```text
-userscripts/immobilien-energy.user.js
-```
+Install the `.user.js` in Tampermonkey, configure your own endpoint(s), then enter the Energy/browser tokens when prompted. Token values are stored by Tampermonkey, not committed to source.
 
-The public userscript deliberately points at an invalid example hostname. Configure your own HTTPS endpoint and matching `@connect` permission before use, then enter your Energy/browser tokens when prompted.
-
-Token values are stored by Tampermonkey at runtime; do not hard-code them into the repository.
+Do not use another operator's production endpoint.
 
 ## Nominatim identification
 
-Configure a meaningful Nominatim User-Agent/contact according to the service policy.
+For a public/self-hosted deployment, configure a meaningful Nominatim User-Agent/contact according to the service policy. The public-export process converts the private hard-coded reference contact into `NOMINATIM_USER_AGENT` configuration.
 
-Example only:
+Example:
 
 ```text
 NOMINATIM_USER_AGENT=immobilien-monitor/1.0 (self-hosted; contact: contact@example.invalid)
 ```
 
-Use your own contact identity rather than copying another operator's value.
+Do not blindly copy someone else's contact identity.
 
 ## Data directories
 
 SQLite/runtime data is expected under the project's `data/` directory and is bind-mounted into Compose containers.
 
-Never commit populated databases, archived listing mail or browser payloads. Back them up separately; see `docs/operations.md`.
+Never commit `data/` or archived listing e-mail. Back it up separately using SQLite's backup API; see `operations.md`.
 
 ## Verify
 
@@ -168,20 +158,7 @@ sudo journalctl \
     --no-pager
 ```
 
-Then use the Telegram review workflow and open a test exposé in your configured browser to verify the browser-to-server flow.
-
-## Adapt the search
-
-The reference score reflects one rural house/land search. It is not intended as a universal property ranking.
-
-Before using the score for your own search, read:
-
-```text
-docs/scoring.md
-docs/customizing-your-search.md
-```
-
-For example, an urban fork may remove water/isolation priorities and instead add public-transport access, service frequency or commute time.
+Then send/use `/incomplete` in Telegram and open a test exposé from the Labor to verify the browser-to-server flow.
 
 ## Security before Internet exposure
 
@@ -192,4 +169,4 @@ SECURITY.md
 docs/public-release.md
 ```
 
-A property-search database can reveal addresses, preferences and personal search history. Protect the database, logs, archived messages and browser payloads accordingly.
+The project can reveal a great deal about a person's property search if deployed carelessly. Protect the database, logs, archived messages and browser payloads accordingly.

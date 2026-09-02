@@ -355,14 +355,12 @@ def _feature_distance(feature, x, y):
 
 
 def _band_label(kind, lower):
+    # Keine gefundene Isophone bedeutet ausschließlich:
+    # Am Objektpunkt liegt keine kartierte EBA-Isophone vor.
+    #
+    # Daraus darf NICHT automatisch "<55" oder "<45"
+    # abgeleitet werden.
     if lower is None:
-
-        if kind == "lden":
-            return "<55"
-
-        if kind == "lnight":
-            return "<45"
-
         return None
 
     lower = int(lower)
@@ -374,7 +372,6 @@ def _band_label(kind, lower):
         return ">=70"
 
     return f"{lower}-{lower + 4}"
-
 
 def _query_isophones(lat, lon):
     x, y = _webmercator(

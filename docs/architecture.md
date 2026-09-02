@@ -2,51 +2,45 @@
 
 ## Overview
 
-GPT-ImmoRadar is a Python/SQLite real-estate decision-support system with Docker services, a small host-side browser-enrichment service and a Tampermonkey userscript.
+GPT-ImmoRadar is a Python/SQLite real-estate decision-support system with four Docker services, one host-side browser enrichment service and a browser userscript.
 
-The architecture separates three concerns:
+The system intentionally separates automatic evidence collection from human decisions. Automatic parsers may fill fields only when the evidence is strong enough; unresolved items stay in Telegram Labor queues instead of being silently treated as zero.
 
-```text
-collect evidence
-      -> persist facts
-      -> interpret those facts with a scoring model
-```
-
-That separation is important for forks. A different search can keep the ingestion, database, Telegram and browser workflow while replacing individual enrichment modules or scoring rules.
-
-The system also separates automatic evidence from human decisions. Parsers fill fields only when the evidence is strong enough; unresolved items remain in Telegram review queues instead of silently becoming zero points.
+The private production repository distinguishes **evidence state** from **numeric value** throughout the pipeline. In particular, `None` can mean unresolved while `0` can be a fully checked result. See `docs/scoring.md`.
 
 ## Main data flow
 
 ```text
 listing alert / pasted URL
-        |
-        v
+        │
+        ▼
      monitor
-        |
-        +-- portal parsing / normalization
-        +-- property-type detection
-        +-- geocoding
-        +-- water / neighbours / noise
-        +-- house: condition / energy evidence
-        +-- land: planning / development evidence
-        +-- score or incomplete state
-        |
-        v
+        │
+        ├── portal parsing / normalization
+        ├── property-type detection
+        ├── geocoding + geo precision
+        ├── water / neighbours / noise
+        ├── buildability / condition hints
+        └── score / provisional range / incomplete state
+        │
+        ▼
      SQLite
-        ^
-        |
-        +-------- telegram-commands <---- Telegram user
-        |                    |
-        |                    +-- active Labor session
-        |
-        +-------- browser_enrich_server.py
-                              ^
-                              | /browser-enrich
-                              |
+        ▲
+        │
+        ├──────── telegram-commands ◄──── Telegram user
+        │                    │
+        │                    ├── active Labor session (~2 s polling)
+        │                    └── exact address/coordinate correction
+        │                                  │
+        │                                  └── invalidate Geo -> enrich -> rescore
+        │
+        └──────── browser_enrich_server.py
+                              ▲
+                              │ /browser-enrich
+                              │
                     Tampermonkey userscript
-                              ^
-                              |
+                              ▲
+                              │
                      live portal exposé
 ```
 
@@ -54,26 +48,28 @@ listing alert / pasted URL
 
 ### `monitor`
 
-The main Compose service handles ingestion, normalization, automatic enrichment, scoring, persistence and initial Telegram notifications.
+Compose service/container responsible for ingestion, normalization, automatic enrichment, scoring, persistence and initial Telegram notifications.
 
-Important modules include:
+Primary modules include:
 
 ```text
 app/monitor.py
 app/scoring.py
 app/enrichment.py
+app/geo_precision.py
+app/noise.py
 app/noise_sources.py
 app/buildability.py
 app/house_condition.py
 ```
 
-Duplicate alerts can refresh ordinary listing facts while stronger manual or browser-derived evidence is preserved where appropriate.
+Duplicate alerts update ordinary listing facts while finalized browser/manual enrichment is preserved where required. In particular, completed energy data and explicit browser condition must not be lost merely because a later alert contains less information.
 
 ### `telegram-commands`
 
-This Compose service handles Telegram commands, callbacks, property cards, manual corrections and guided review queues ("Labor").
+Compose service/container responsible for Telegram commands, callbacks, property cards, manual corrections and Labor workflows.
 
-Relevant modules include:
+Relevant modules:
 
 ```text
 app/telegram_commands.py
@@ -81,18 +77,44 @@ app/telegram_ui.py
 app/incomplete_workflow.py
 app/incomplete_energy.py
 app/energy_lab_auto.py
+app/manual_coordinates.py
 app/user_status.py
 ```
 
-The active queue is dynamic rather than a frozen list. When browser enrichment resolves, blacklists or purges the current property, Telegram can advance to the next unresolved item.
+`/incomplete` is the production workbench. Condition and Energy can keep active in-memory Labor sessions; Address/Geo resolves missing exact location; `Lage präzisieren` is a separate optional queue for locality-only provisional candidates.
+
+The active Energy and Condition Labor sessions are kept in process memory. While a session is active, Telegram long-polling is shortened to roughly two seconds and the current queue is re-evaluated. A queue is dynamic, not a frozen list.
+
+Changes to `telegram_commands.py` require restarting the `telegram-commands` Compose service.
+
+See `docs/workflows.md` for queue semantics and auto-advance conditions.
+
+### Manual location domain module
+
+`app/manual_coordinates.py` owns the exact-address/coordinate correction logic instead of leaving it embedded in Telegram callbacks.
+
+A manual exact location update:
+
+```text
+persist exact coordinate
+    -> geo_precision = exact
+    -> clear previous Water fields
+    -> clear previous Neighbour/building fields
+    -> clear previous Rail/Road/Air noise fields
+    -> call normal enrichment
+    -> rescore
+    -> persist refreshed evidence
+```
+
+This is intentionally a rescan, not just a latitude/longitude overwrite. Once exact coordinates are known, a downstream service failure does not turn the property back into an address-entry task.
 
 ### `property-browser`
 
-A separate Compose service provides server-side page rendering for workflows that need it. It is distinct from the human-assisted browser-enrichment path.
+Compose service/container providing server-side browser rendering for workflows that need it. It is distinct from the browser enrichment service and does not normally need a restart for scoring-only changes.
 
 ### `energy-api`
 
-A Compose service for explicit/manual energy submissions. It remains a fallback even though the preferred flow can obtain energy evidence from the user's rendered browser page.
+Compose service/container for explicit/manual energy submissions. It remains a fallback even though the preferred path is now the unified browser enrichment flow.
 
 Relevant modules:
 
@@ -101,23 +123,23 @@ app/energy_api.py
 app/energy_data.py
 ```
 
-### Host browser-enrichment service
+### Host browser enrichment service
 
-The reference architecture runs:
+`immobilien-browser-enrich.service` runs:
 
 ```text
 app/browser_enrich_server.py
 ```
 
-through a small systemd service. Reference listener:
+Reference bind address:
 
 ```text
 127.0.0.1:8765
 ```
 
-It receives authenticated browser evidence, stores normalized facts and can rescore the property immediately.
+It receives authenticated browser payloads, stores browser evidence and can update/rescore the property immediately.
 
-It coordinates modules such as:
+It coordinates:
 
 ```text
 app/browser_energy.py
@@ -126,38 +148,25 @@ app/browser_condition_hints.py
 app/lab_terminal.py
 ```
 
+It can produce normal enrichment results, browser blacklist results and terminal `purged` results for explicitly removed portal listings.
+
 ### Tampermonkey userscript
 
-The userscript runs on supported listing pages that the user opens normally.
+The production userscript is `Immobilienmonitor – Browser & Energie` v1.3.1.
 
 Its responsibilities include:
 
-- detecting supported exposé routes, including SPA navigation;
-- waiting for usable rendered content;
-- pausing on CAPTCHA/security pages rather than treating them as listing data;
-- opening portal UI details when required to expose energy information;
-- extracting DOM-only energy hints;
-- submitting rendered evidence to `/browser-enrich`;
-- showing enrichment status in the page;
-- retaining a manual Energy fallback.
+- detecting ImmoScout24 and Immowelt exposé routes, including SPA navigation;
+- waiting for a usable page instead of transmitting a half-rendered route;
+- avoiding CAPTCHA pages;
+- automatically opening Immowelt “Mehr Infos” when needed for energy details;
+- closing only an energy dialog that the script itself opened;
+- extracting DOM-only energy-class hints from ImmoScout24;
+- sending page text, URL, heading, JSON-LD and DOM hints to `/browser-enrich`;
+- displaying browser enrichment status;
+- retaining an explicit manual Energy fallback.
 
-The public source is generated with a neutral example endpoint. Each fork must configure its own server and Tampermonkey `@connect` permission.
-
-## Property-type-specific evidence
-
-Not every criterion applies to every property type.
-
-For an **existing house/farm**, important property-specific evidence includes:
-
-```text
-building condition
-energy performance / energy label
-living area
-```
-
-For **building land**, the corresponding workflow instead cares about planning/development evidence such as whether residential construction is possible or a permit/preliminary approval is known.
-
-The shared geo evidence — for example water, neighbours and mapped noise — can be reused by both scoring families.
+The exact production build is archived under `userscripts/archive/`. Public releases must use configurable endpoints instead of a private production hostname.
 
 ## Browser terminal events
 
@@ -171,44 +180,86 @@ browser_terminal_events
     updated_at
 ```
 
-`purged` is only generated after explicit portal evidence that a listing was removed or is unavailable. A network failure, timeout or CAPTCHA is not sufficient evidence to delete a property.
+`purged` is only generated after a portal page explicitly indicates that the listing was removed/unavailable. A generic HTTP/network failure is not enough to delete a property.
 
-This terminal-event mechanism lets an active Telegram Labor advance even after the underlying property row has been deleted.
+Purge cleanup removes the property and associated per-property search/favorite/user-status references before recording the terminal event. This gives the active Telegram Labor an unambiguous reason to advance even though the property row itself no longer exists.
 
 ## Condition pipeline
 
-Automatic condition classification deliberately relies on explicit labelled portal fields rather than arbitrary marketing language.
-
-Examples:
+Automatic browser condition classification deliberately reads explicit labelled portal fields such as:
 
 ```text
 Zustand der Immobilie
 Objektzustand
 ```
 
-Manual decisions have higher precedence than weaker automatic guesses.
+It does not classify a house from arbitrary positive/negative words in free-form marketing text.
+
+`condition_source = browser_explicit` is preserved across duplicate alerts. Manual Telegram decisions have higher precedence.
+
+Modernization/sanitation years are context for the Labor UI, not proof that the building is in good condition.
 
 ## Energy pipeline
 
-The canonical browser parser lives in `app/browser_energy.py`; persistence and normalization live in `app/energy_data.py`.
+The canonical browser parser lives in `app/browser_energy.py`; persistence/normalization lives in `app/energy_data.py`.
 
-Energy states distinguish unresolved evidence from known-but-poor evidence. That distinction is required by the scoring contract: unknown is not automatically zero.
+The live Energy queue is derived from current energy fields rather than stale `score_details`. Finalized energy survives later duplicate-alert refreshes.
+
+Energy states distinguish:
+
+```text
+untested                  -> incomplete
+not_available_yet         -> incomplete
+checked but unknown       -> complete with uncertainty penalty
+not_required              -> complete with uncertainty penalty
+no_label                  -> complete with stronger penalty
+available class/value     -> complete
+```
+
+## Geo precision pipeline
+
+Geo precision is persisted explicitly:
+
+```text
+exact
+locality
+missing
+```
+
+`exact` permits normal Water/Neighbours/Noise scoring.
+
+`locality` deliberately avoids a town-centre pseudo-coordinate. `app/scoring.py` creates worst/best Geo variants and stores a provisional score range instead of an exact total. These candidates remain visible and can be processed through the optional `Lage präzisieren` queue.
+
+`missing` remains an Address/Geo Labor task until a trustworthy exact location is known.
+
+## Noise evidence pipeline
+
+Noise data keeps check state separate from mapped values.
+
+```text
+noise_checked_at = None -> unresolved
+noise_checked_at set    -> check executed; evaluate returned evidence
+```
+
+A completed check can therefore yield a legitimate `0` adjustment.
+
+For EBA rail data, no isophone at the point does not imply a fabricated low band. For existing houses/farms, `app/scoring.py` can use a conservative rail distance + annual-traffic fallback when the check is complete, mapped rail levels are absent and the required fallback evidence is available. Mapped EBA levels always win; the fallback itself does not create a KO.
 
 ## Data storage
 
-Runtime SQLite path inside the Compose services:
+Runtime SQLite path inside Compose containers:
 
 ```text
 /data/database.sqlite3
 ```
 
-A typical host path is:
+Reference host path:
 
 ```text
 /opt/immobilien-monitor/data/database.sqlite3
 ```
 
-The database is private runtime data and is never part of the public source export.
+The database is runtime/private data and must not be part of a public source snapshot.
 
 ## Scoring lifecycle
 
@@ -216,32 +267,17 @@ For required categories:
 
 ```text
 None = not checked / unresolved
-0    = checked and genuinely scored zero
+0    = checked and genuinely zero
 ```
 
-A complete numeric house/farm score is withheld while required evidence is unresolved. A hard KO can still be returned immediately.
+A complete numeric total is withheld while required categories remain unresolved. A hard KO can still be returned immediately.
 
-`score_details` stores the explanation of a scoring pass so presentation can show how the result was reached rather than inventing a second scoring model.
+Locality-only Geo is a third presentation state: it can produce a provisional range without pretending the property has exact environmental evidence.
 
-## Extension points
+`score_details` is the persisted explanation of a scoring pass. Presentation should reuse it rather than independently constructing a second scoring model. Workflows with dedicated live completion state, especially Energy, must use the live fields for queue membership.
 
-The existing geo modules are examples, not a fixed definition of what a good property is.
-
-A fork can add a new enrichment module and then connect its persisted evidence to the scoring model. For example, an urban-apartment fork could replace rural water/isolation priorities with:
-
-```text
-public-transport stop distance
-service frequency
-commute time
-schools / childcare
-shops / daily services
-parking / bike storage
-```
-
-A railway station could even produce two independent facts: a mobility benefit and a noise penalty. Keeping evidence separate from the score makes this possible without conflating the two.
-
-See `docs/customizing-your-search.md` for a concrete public-transport example.
+For the exact production scoring rules see `docs/scoring.md`.
 
 ## Module direction
 
-New domain workflows should live in dedicated modules where practical. Telegram code should orchestrate interaction; it should not become the only place where domain rules exist.
+New domain workflows should continue to move into dedicated modules. `telegram_commands.py` should primarily orchestrate Telegram interaction rather than become the home for all domain logic.

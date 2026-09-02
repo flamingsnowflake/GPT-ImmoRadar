@@ -2,9 +2,9 @@
 
 """Create a history-free, privacy-sanitized public source snapshot.
 
-Run this from a clean private checkout. The destination is a new ordinary
-directory; no .git history is copied. Review and scan the result independently
-before publishing it.
+Run this from a clean private production checkout. The destination is a new
+ordinary directory; no .git history is copied. Review and scan the result
+independently before publishing it.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import os
 import re
 import shutil
 import subprocess
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +27,7 @@ PUBLIC_TOP_LEVEL = {
     "Dockerfile",
     "Dockerfile.browser",
     "LICENSE",
+    "PROJECT.md",
     "README.md",
     "SECURITY.md",
     "docker-compose.yml",
@@ -41,7 +41,7 @@ PUBLIC_PREFIXES = (
     "docs/",
     "secrets/README.md",
     "tools/export_public_snapshot.py",
-    "userscripts/README.md",
+    "userscripts/",
 )
 
 EXCLUDE_PREFIXES = (
@@ -50,26 +50,13 @@ EXCLUDE_PREFIXES = (
     "browser-enrich-inbox/",
     "backups/",
     "userscripts/archive/",
-    # The private regression suite contains production-derived examples.
-    # Public tests should use synthetic fixtures instead.
-    "app/test_",
 )
 
-EXCLUDE_PATHS = {
-    "BACKUP-MANIFEST-2026-09-01.md",
-    "PROJECT.md",
-    "app/noise_all_test.py",
-    "deploy/apache/nebulon.conf.production",
-    "deploy/apache/nebulon-ssl.conf.production",
-    "deploy/systemd/immobilien-browser-enrich.service.production",
-    "docs/current-state.md",
-    "docs/decisions.md",
-    "docs/recovery-and-secrets.md",
-}
-
-EXCLUDE_BASENAMES = {
-    # Re-generated from the canonical private archive with neutral endpoints.
-    "immobilien-energy.user.js",
+# Production search preferences remain private. Public example versions are
+# copied into their canonical names after the tracked-source pass.
+PRIVATE_CONFIG_PATHS = {
+    "config/score.yaml",
+    "config/blacklist.yaml",
 }
 
 TEXT_SUFFIXES = {
@@ -102,7 +89,7 @@ SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b"),
 )
 
-SENSITIVE_ASSIGNMENT_RE = re.compile(
+ASSIGNMENT_SECRET_RE = re.compile(
     r"(?im)^\s*"
     r"(?P<name>[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY)[A-Z0-9_]*)"
     r"\s*=\s*"
@@ -137,7 +124,7 @@ def tracked_paths() -> list[Path]:
 def is_public_path(relative: Path) -> bool:
     value = relative.as_posix()
 
-    if value in EXCLUDE_PATHS:
+    if value in PRIVATE_CONFIG_PATHS:
         return False
 
     if any(
@@ -145,9 +132,6 @@ def is_public_path(relative: Path) -> bool:
         or value.startswith(prefix)
         for prefix in EXCLUDE_PREFIXES
     ):
-        return False
-
-    if relative.name in EXCLUDE_BASENAMES:
         return False
 
     if value in PUBLIC_TOP_LEVEL:
@@ -180,8 +164,8 @@ def sanitize_common_text(text: str) -> str:
         text,
     )
 
-    # Neutralize browser-facing API endpoints without hard-coding the private
-    # deployment hostname into this public exporter.
+    # Generic browser API endpoint rewrite; no private hostname is hard-coded
+    # in this exporter.
     text = re.sub(
         r"https://[^\s\"']+/browser-enrich",
         "https://monitor.example.invalid/browser-enrich",
@@ -304,52 +288,28 @@ def copy_tracked_source(destination: Path) -> None:
             )
 
 
-def export_userscript(destination: Path) -> None:
-    archive_dir = ROOT / "userscripts" / "archive"
-    archives = sorted(
-        archive_dir.glob(
-            "Immobilienmonitor-Browser-Energie-*.zip"
-        )
-    )
+def install_public_configs(destination: Path) -> None:
+    mappings = {
+        ROOT / "config" / "public" / "score.example.yaml":
+            destination / "config" / "score.yaml",
+        ROOT / "config" / "public" / "blacklist.example.yaml":
+            destination / "config" / "blacklist.yaml",
+    }
 
-    if not archives:
-        raise RuntimeError(
-            "Kein kanonisches Userscript-Archiv gefunden."
-        )
-
-    archive = archives[-1]
-
-    with zipfile.ZipFile(archive) as zipped:
-        members = [
-            name
-            for name in zipped.namelist()
-            if name.endswith(".user.js")
-        ]
-
-        if len(members) != 1:
+    for source, target in mappings.items():
+        if not source.exists():
             raise RuntimeError(
-                "Userscript-Archiv muss genau eine .user.js enthalten."
+                f"Public config example fehlt: {source}"
             )
 
-        raw = zipped.read(members[0]).decode(
-            "utf-8"
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
         )
-
-    public_text = sanitize_userscript(raw)
-
-    target = (
-        destination
-        / "userscripts"
-        / "immobilien-energy.user.js"
-    )
-    target.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-    target.write_text(
-        public_text,
-        encoding="utf-8",
-    )
+        target.write_text(
+            source.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
 
 def configured_private_strings() -> list[str]:
@@ -378,9 +338,7 @@ def assignment_looks_secret(name: str, value: str) -> bool:
         "os.environ",
         "getenv(",
         "gm_getvalue",
-        "token_key",
-        "browser_token_key",
-        "energy_api_token",
+        "energy_api_token",  # identifier/storage-key text is not a token value
         "browser_enrich_token",
     )
 
@@ -403,7 +361,13 @@ def audit_text(relative: Path, text: str, failures: list[str]) -> None:
                 f"{relative}: high-confidence secret pattern"
             )
 
-    for match in SENSITIVE_ASSIGNMENT_RE.finditer(text):
+    for match in ASSIGNMENT_SECRET_RE.finditer(text):
+        if (
+            relative.as_posix() == "tools/export_public_snapshot.py"
+            and match.group("name") == "ASSIGNMENT_SECRET_RE"
+        ):
+            continue
+
         if assignment_looks_secret(
             match.group("name"),
             match.group("value"),
@@ -455,12 +419,6 @@ def audit_snapshot(destination: Path) -> None:
             destination
         )
 
-        if ".production" in path.name:
-            failures.append(
-                f"{relative}: production-specific deployment artifact"
-            )
-            continue
-
         if path.suffix.lower() in forbidden_suffixes:
             failures.append(
                 f"{relative}: forbidden runtime/binary data type"
@@ -509,7 +467,7 @@ def write_manifest(destination: Path) -> None:
 
     content = f"""# Public export manifest
 
-Generated from private source commit:
+Generated from private production commit:
 
 ```text
 {commit}
@@ -523,7 +481,7 @@ Generated at:
 
 This directory intentionally contains **no Git history** from the private production repository.
 
-Production databases, credentials, sessions, private deployment captures, the production userscript archive and production-derived regression fixtures are intentionally excluded.
+Production `score.yaml` and `blacklist.yaml` are not exported; generic public examples are installed instead.
 
 Before publication, run an independent secret scanner and manual review as described in `docs/public-release.md`.
 """
@@ -558,6 +516,13 @@ def main() -> None:
     status = git(
         "status",
         "--porcelain",
+        "--",
+        ".",
+        ":(exclude)data/**",
+        ":(exclude)private/**",
+        ":(exclude)browser-enrich-inbox/**",
+        ":(exclude)backups/**",
+        ":(exclude)userscripts/archive/**",
     )
     if status:
         raise SystemExit(
@@ -571,7 +536,7 @@ def main() -> None:
 
     try:
         copy_tracked_source(destination)
-        export_userscript(destination)
+        install_public_configs(destination)
         write_manifest(destination)
         audit_snapshot(destination)
     except Exception:

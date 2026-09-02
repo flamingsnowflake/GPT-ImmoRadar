@@ -2,92 +2,103 @@
 
 ## Why it exists
 
-Some useful real-estate data is only reliably visible after a listing page has been rendered in a normal browser. Server-side fetches may receive reduced markup, security/challenge pages, or text that omits DOM-only information such as an energy-efficiency class represented by an image or SVG.
+Some useful real-estate data is only reliably visible in the rendered browser page. Server-side HTTP fetches may receive reduced markup, anti-bot responses, or text that omits DOM-only information such as an energy-efficiency class represented by an image/SVG.
 
-GPT-ImmoRadar therefore uses the user's normal browser as an evidence source while keeping canonical parsing, persistence and scoring on the server.
+GPT-ImmoRadar therefore uses the operator's normal browser as an evidence source while keeping canonical parsing and persistence on the server.
 
-The browser is not asked to decide the final score. It submits rendered evidence; Python modules normalize that evidence, protect higher-precedence manual values and rescore the property.
+The browser is not asked to decide the final score. It sends the rendered evidence; Python modules normalize that evidence, protect higher-precedence manual data and rescore the property.
 
 ## End-to-end flow
 
 ```text
 Telegram Labor/property card
-        |
-        | open normal portal link
-        v
+        │
+        │ open normal portal link
+        ▼
 ImmoScout24 / Immowelt exposé
-        |
-        v
+        │
+        ▼
 Tampermonkey userscript
-        |
-        +-- route / portal ID
-        +-- rendered page text
-        +-- heading / document title
-        +-- JSON-LD
-        +-- DOM-only energy hint
-        |
-        v
-HTTPS POST /browser-enrich
+        │
+        ├─ route/portal ID
+        ├─ rendered page text
+        ├─ H1/document title
+        ├─ JSON-LD
+        └─ DOM-only energy class hint
+        │
+        ▼
+POST /browser-enrich
 X-Browser-Enrich-Token: ...
-        |
-        v
-HTTPS reverse proxy
-        |
-        v
-127.0.0.1:8765/enrich
-        |
-        v
+        │
+        ▼
+reverse proxy / local service
+        │
+        ▼
 app/browser_enrich_server.py
-        |
-        +-- blacklist-relevant text scope
-        +-- portal fact normalization
-        +-- app/browser_energy.py
-        +-- app/browser_condition.py
-        +-- app/lab_terminal.py
-        +-- scoring
-        |
-        v
+        │
+        ├─ blacklist-relevant text scope
+        ├─ portal fact normalization
+        ├─ app/browser_energy.py
+        ├─ app/browser_condition.py
+        ├─ app/lab_terminal.py
+        └─ scoring
+        │
+        ▼
 SQLite
-        |
-        v
+        │
+        ▼
 Telegram active Labor notices resolution
 ```
 
-## Browser behavior
+## Tampermonkey production build
+
+Name:
+
+```text
+Immobilienmonitor – Browser & Energie
+```
+
+Production version:
+
+```text
+1.3.1
+```
+
+Canonical private-production archive:
+
+```text
+userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.1.zip
+```
+
+The archive contains the exact `.user.js` that was tested in production. It contains deployment-specific endpoint hostnames but **no API token values**; tokens are requested at runtime and stored in Tampermonkey userscript storage.
+
+### Browser behavior
 
 The userscript:
 
 1. identifies portal and portal ID from the exposé route;
-2. handles SPA route changes so one property's content is not sent under another ID;
+2. handles SPA route changes so a previous property's content is not sent under a new ID;
 3. waits for sufficiently rendered page text;
 4. pauses on CAPTCHA/security-check pages rather than treating them as listing content;
 5. on Immowelt, opens “Mehr Infos” when needed so hidden energy fields become visible;
-6. closes only a detail dialog that the script itself opened;
-7. extracts DOM-only energy-class hints when present;
+6. records whether it opened that energy detail UI and in v1.3.1 closes only a dialog it opened itself;
+7. extracts ImmoScout24's DOM-only energy-class hint when present;
 8. sends page evidence to `/browser-enrich`;
 9. renders a small status panel in the page;
-10. retains an explicit manual Energy fallback path.
+10. retains an explicit “Energy fallback” path to the separate Energy API.
 
-The public userscript is stored at:
+### Why Python remains canonical
 
-```text
-userscripts/immobilien-energy.user.js
-```
+The userscript deliberately does not become a second independent scoring implementation. Browser-specific extraction can change with portal UI; normalization and scoring rules should be testable in Python.
 
-Its endpoint is intentionally neutralized in the public export. Configure your own HTTPS host and matching Tampermonkey `@connect` permission before use.
-
-## Why Python remains canonical
-
-The userscript deliberately does not become a second scoring implementation. Portal UI extraction can change; normalization and scoring rules should remain testable and explainable on the server.
-
-Energy parsing lives primarily in:
+For Energy, the server uses:
 
 ```text
 app/browser_energy.py
 app/energy_data.py
 ```
 
-Explicit condition parsing lives primarily in:
+For explicit Condition:
 
 ```text
 app/browser_condition.py
@@ -96,54 +107,21 @@ app/browser_condition_hints.py
 
 ## Host service
 
-The reference architecture runs:
-
-```text
-app/browser_enrich_server.py
-```
-
-through:
+The reference deployment runs `app/browser_enrich_server.py` through:
 
 ```text
 immobilien-browser-enrich.service
 ```
 
-Reference listener:
+Reference application bind:
 
 ```text
 127.0.0.1:8765
 ```
 
-A reusable unit template is provided under:
+The service expects a token file outside Git and updates the host database under the project data directory. A generic systemd template is provided under `deploy/systemd/`.
 
-```text
-deploy/systemd/immobilien-browser-enrich.service.example
-```
-
-## HTTPS ingress
-
-The browser should not connect directly to an unauthenticated Internet-facing port 8765.
-
-Recommended external route:
-
-```text
-/browser-enrich
-```
-
-Recommended internal route:
-
-```text
-http://127.0.0.1:8765/enrich
-```
-
-The manual/fallback Energy API can be exposed separately:
-
-```text
-/immobilien-energy/energy
-    -> http://127.0.0.1:8090/energy
-```
-
-See `docs/apache-reverse-proxy.md` for a generic Apache example and the security principles that apply to any reverse proxy.
+The externally visible `/browser-enrich` URL belongs to the operator's reverse-proxy configuration and is intentionally deployment-specific.
 
 ## Payload
 
@@ -163,7 +141,7 @@ The unified browser payload contains fields equivalent to:
 }
 ```
 
-The browser-enrichment route uses its own shared token.
+The body is authenticated separately from the Energy fallback API.
 
 ## Database result statuses
 
@@ -178,7 +156,7 @@ purged
 not_found
 ```
 
-The userscript treats the response as status/reporting information; SQLite remains authoritative.
+The userscript should treat the response as status/reporting information; SQLite remains authoritative.
 
 ## Energy
 
@@ -193,13 +171,13 @@ Browser inspection can provide:
 - energy construction year;
 - raw supporting text.
 
-When the rendered page was genuinely inspected but contains no usable energy information, the application may record a checked `unknown` outcome according to the configured policy. `not_available_yet` remains unresolved.
+When the rendered page was genuinely inspected but contains no usable energy information, the application may record a checked `unknown` outcome according to the configured risk policy. `not_available_yet` is different: it stays unresolved.
 
 Manual/final Energy values are protected from weaker automatic updates.
 
 ## Condition
 
-Only explicit labelled portal fields are automatically classified. This avoids turning marketing language into a false structural assessment.
+Only explicit labelled portal fields are automatically classified. This avoids turning marketing phrases in a description into a false structural assessment.
 
 Example evidence shapes:
 
@@ -214,13 +192,19 @@ or:
 Zustand der Immobilie: Gepflegt
 ```
 
-If raw condition text cannot be mapped decisively, it can still be surfaced for human review.
+If a portal exposes raw condition text that cannot be mapped decisively, the hint can still be shown in the Labor for human review.
 
-## Blacklist and removed listings
+## Blacklist
 
-Browser blacklist evaluation is useful because it sees the rendered listing, but rendered pages also contain navigation/recommendations. Portal-specific text scoping helps prevent unrelated UI text from becoming evidence.
+Browser blacklist evaluation is powerful because it sees the rendered listing, but the rendered page also contains navigation/recommendations. Portal-specific text scoping removes known unrelated sections before blacklist matching.
 
-`app/lab_terminal.py` also recognizes explicit portal language that a listing has been removed or is unavailable.
+A browser blacklist event marks the property as blacklisted and records a terminal event for active Labor handling.
+
+## Removed listings / purge
+
+`app/lab_terminal.py` recognizes explicit portal language that a listing has been removed/unavailable.
+
+Tested examples include the respective deleted-ad/not-found pages of Immowelt and ImmoScout24.
 
 Safety rule:
 
@@ -229,25 +213,36 @@ explicit portal removal evidence -> purge allowed
 network error / timeout / CAPTCHA -> purge NOT allowed
 ```
 
-A terminal event allows an active Telegram Labor to observe that a property disappeared after deletion and advance to the next item.
+Purge cleanup removes the property and associated local search/favorite/user-status references and then records `browser_terminal_events.status = purged`.
 
-## Human-assisted, not access-control bypass
+The terminal table exists specifically because after deletion there is no property row left for the active Telegram Labor to observe.
 
-The intended flow is deliberately simple:
+## Labor auto-advance
+
+When Energy or Condition Labor is active, `telegram-commands` shortens its polling interval and re-queries the relevant queue. It also checks terminal events for the active portal ID.
+
+That allows all of these to advance the same Telegram card:
 
 ```text
-user opens page normally
-        -> browser renders what the user can access
-        -> userscript extracts evidence from that rendered page
+condition becomes known
+energy becomes complete
+blacklisted
+offline / not interested
+physical delete
+browser purge
 ```
-
-The project is not intended to defeat CAPTCHA, authentication or other access controls.
 
 ## Security model
 
-- Browser-enrichment token values are not committed.
-- Tampermonkey stores user-entered token values in userscript storage.
-- The host service should bind locally/private by default.
-- Remote browser traffic should use HTTPS.
-- Browser captures and inbox payloads are private runtime data and belong outside Git.
-- TLS private keys remain outside Git.
+- Browser-enrichment token is not committed.
+- Tampermonkey stores token values in its own userscript storage.
+- Host service binds locally in the reference deployment.
+- Internet exposure should be through a controlled reverse proxy.
+- Browser captures/inbox payloads are runtime data and ignored by Git.
+- Public releases must not hardcode the private production endpoint.
+
+## Public version
+
+The exact 1.3.1 archive is retained in the private production repo for reproducibility. A public export should generate a portable userscript with configurable endpoint(s), so forks do not accidentally send their property pages to another operator's server.
+
+See `docs/public-release.md`.

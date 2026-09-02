@@ -107,15 +107,22 @@ def _arcgis_point(
 
 
 def _eea_db(layer_id, lat, lon):
-    try:
-        features = _arcgis_point(
-            EEA_BASE,
-            layer_id,
-            lat,
-            lon,
-        )
-    except Exception:
-        return None
+    # Wichtig:
+    #
+    # None darf hier ausschließlich bedeuten:
+    # Die EEA-Abfrage war erfolgreich, aber am Punkt
+    # liegt keine kartierte Lärmbelastung vor.
+    #
+    # Netzwerk-, Server- und API-Fehler müssen dagegen
+    # nach oben durchgereicht werden. Der Aufrufer lässt
+    # noise_checked_at dann auf None und der Score bleibt
+    # incomplete statt fälschlich "ruhig".
+    features = _arcgis_point(
+        EEA_BASE,
+        layer_id,
+        lat,
+        lon,
+    )
 
     values = []
 

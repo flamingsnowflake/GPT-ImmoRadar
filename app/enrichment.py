@@ -446,6 +446,334 @@ def find_nearest_water(
         "feature_count":
             feature_count
     }
+
+NOMINATIM_REVERSE_URL = (
+    "https://nominatim.openstreetmap.org/reverse"
+)
+
+NIEDERSACHSEN_WATER_WFS_URL = (
+    "https://www.inspire.niedersachsen.de/"
+    "doorman/noauth/atkis-bdlm-dls-hy-p"
+)
+
+NIEDERSACHSEN_BUILDING_WFS_URL = (
+    "https://opendata.lgln.niedersachsen.de/"
+    "doorman/noauth/alkis_wfs_einfach"
+)
+
+NIEDERSACHSEN_BUILDING_TYPENAME = (
+    "ave:GebaeudeBauwerk"
+)
+
+
+FEDERAL_STATES = {
+
+    "DE-BW": {
+        "name": "Baden-Württemberg",
+        "geo_supported": False,
+    },
+
+    "DE-BY": {
+        "name": "Bayern",
+        "geo_supported": False,
+    },
+
+    "DE-BE": {
+        "name": "Berlin",
+        "geo_supported": False,
+    },
+
+    "DE-BB": {
+        "name": "Brandenburg",
+        "geo_supported": False,
+    },
+
+    "DE-HB": {
+        "name": "Bremen",
+        "geo_supported": False,
+    },
+
+    "DE-HH": {
+        "name": "Hamburg",
+        "geo_supported": False,
+    },
+
+    "DE-HE": {
+        "name": "Hessen",
+        "geo_supported": False,
+    },
+
+    "DE-MV": {
+        "name": "Mecklenburg-Vorpommern",
+        "geo_supported": False,
+    },
+
+    "DE-NI": {
+        "name": "Niedersachsen",
+        "geo_supported": True,
+    },
+
+    "DE-NW": {
+        "name": "Nordrhein-Westfalen",
+        "geo_supported": False,
+    },
+
+    "DE-RP": {
+        "name": "Rheinland-Pfalz",
+        "geo_supported": False,
+    },
+
+    "DE-SL": {
+        "name": "Saarland",
+        "geo_supported": False,
+    },
+
+    "DE-SN": {
+        "name": "Sachsen",
+        "geo_supported": False,
+    },
+
+    "DE-ST": {
+        "name": "Sachsen-Anhalt",
+        "geo_supported": True,
+    },
+
+    "DE-SH": {
+        "name": "Schleswig-Holstein",
+        "geo_supported": False,
+    },
+
+    "DE-TH": {
+        "name": "Thüringen",
+        "geo_supported": False,
+    },
+}
+
+
+FEDERAL_STATE_CODE_BY_NAME = {
+
+    "Baden-Württemberg":
+        "DE-BW",
+
+    "Bavaria":
+        "DE-BY",
+
+    "Bayern":
+        "DE-BY",
+
+    "Berlin":
+        "DE-BE",
+
+    "Brandenburg":
+        "DE-BB",
+
+    "Bremen":
+        "DE-HB",
+
+    "Hamburg":
+        "DE-HH",
+
+    "Hessen":
+        "DE-HE",
+
+    "Hesse":
+        "DE-HE",
+
+    "Mecklenburg-Vorpommern":
+        "DE-MV",
+
+    "Mecklenburg-Western Pomerania":
+        "DE-MV",
+
+    "Niedersachsen":
+        "DE-NI",
+
+    "Lower Saxony":
+        "DE-NI",
+
+    "Nordrhein-Westfalen":
+        "DE-NW",
+
+    "North Rhine-Westphalia":
+        "DE-NW",
+
+    "Rheinland-Pfalz":
+        "DE-RP",
+
+    "Rhineland-Palatinate":
+        "DE-RP",
+
+    "Saarland":
+        "DE-SL",
+
+    "Sachsen":
+        "DE-SN",
+
+    "Saxony":
+        "DE-SN",
+
+    "Sachsen-Anhalt":
+        "DE-ST",
+
+    "Saxony-Anhalt":
+        "DE-ST",
+
+    "Schleswig-Holstein":
+        "DE-SH",
+
+    "Thüringen":
+        "DE-TH",
+
+    "Thuringia":
+        "DE-TH",
+}
+
+
+class GeoCoverageUnavailable(
+    RuntimeError
+):
+    pass
+
+
+def _federal_state_name(
+    state_code,
+):
+
+    state = FEDERAL_STATES.get(
+        state_code,
+        {},
+    )
+
+    return (
+        state.get("name")
+        or state_code
+        or "unbekanntes Bundesland"
+    )
+
+
+def _geo_coverage_message(
+    state_code,
+):
+
+    state_name = (
+        _federal_state_name(
+            state_code
+        )
+    )
+
+    return (
+        f"Für {state_name} ist noch keine "
+        "Geo-/Wasserdatenbank eingerichtet"
+    )
+
+
+_GEO_STATE_CACHE = {}
+
+
+def _federal_state_code(
+    latitude,
+    longitude,
+):
+
+    key = (
+        round(float(latitude), 6),
+        round(float(longitude), 6),
+    )
+
+    cached = _GEO_STATE_CACHE.get(
+        key
+    )
+
+    if cached is not None:
+        return cached
+
+    params = urllib.parse.urlencode({
+        "lat": float(latitude),
+        "lon": float(longitude),
+        "format": "jsonv2",
+        "zoom": 5,
+        "addressdetails": 1,
+    })
+
+    url = (
+        f"{NOMINATIM_REVERSE_URL}?"
+        f"{params}"
+    )
+
+    _rate_limit_nominatim()
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        },
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=20,
+    ) as response:
+
+        data = json.loads(
+            response.read().decode(
+                "utf-8"
+            )
+        )
+
+    address = (
+        data.get("address")
+        or {}
+    )
+
+    state_code = (
+        address.get(
+            "ISO3166-2-lvl4"
+        )
+        or address.get(
+            "ISO3166-2-lvl3"
+        )
+    )
+
+    state_name = address.get(
+        "state"
+    )
+
+    if not state_code:
+
+        state_code = (
+            FEDERAL_STATE_CODE_BY_NAME.get(
+                state_name
+            )
+        )
+
+    if not state_code:
+
+        raise RuntimeError(
+            "Bundesland konnte für "
+            f"{latitude:.6f}, "
+            f"{longitude:.6f} "
+            "nicht bestimmt werden"
+        )
+
+    _GEO_STATE_CACHE[
+        key
+    ] = state_code
+
+    print(
+        "GEO STATE: "
+        f"{state_code}"
+        + (
+            f" | {state_name}"
+            if state_name
+            else ""
+        ),
+        flush=True,
+    )
+
+    return state_code
+
+
 def find_best_water(
     latitude,
     longitude,
@@ -454,27 +782,73 @@ def find_best_water(
 
     radius_km = radius_m / 1000.0
 
-    (
-        min_lat,
-        min_lon,
-        max_lat,
-        max_lon
-    ) = _bbox_4326(
+    state_code = _federal_state_code(
         latitude,
         longitude,
-        radius_km
     )
 
-    bbox = (
-        f"{min_lat},{min_lon},"
-        f"{max_lat},{max_lon},"
-        f"urn:ogc:def:crs:EPSG::4326"
-    )
+    if state_code == "DE-NI":
 
-    wfs_url = (
-        "https://geodatenportal.sachsen-anhalt.de/"
-        "ows_INSPIRE_LVermGeo_ATKIS_HY-P_WFS"
-    )
+        point_x, point_y = (
+            _transform_to_25832.transform(
+                longitude,
+                latitude,
+            )
+        )
+
+        bbox = (
+            f"{point_x - radius_m},"
+            f"{point_y - radius_m},"
+            f"{point_x + radius_m},"
+            f"{point_y + radius_m},"
+            "urn:ogc:def:crs:EPSG::25832"
+        )
+
+        wfs_url = (
+            NIEDERSACHSEN_WATER_WFS_URL
+        )
+
+        water_source = (
+            "LGLN Niedersachsen "
+            "ATKIS HY-P WFS"
+        )
+
+    elif state_code == "DE-ST":
+
+        (
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon
+        ) = _bbox_4326(
+            latitude,
+            longitude,
+            radius_km
+        )
+
+        bbox = (
+            f"{min_lat},{min_lon},"
+            f"{max_lat},{max_lon},"
+            "urn:ogc:def:crs:EPSG::4326"
+        )
+
+        wfs_url = (
+            "https://geodatenportal.sachsen-anhalt.de/"
+            "ows_INSPIRE_LVermGeo_ATKIS_HY-P_WFS"
+        )
+
+        water_source = (
+            "LVermGeo Sachsen-Anhalt "
+            "ATKIS HY-P WFS"
+        )
+
+    else:
+
+        raise GeoCoverageUnavailable(
+            _geo_coverage_message(
+                state_code
+            )
+        )
 
     params = urllib.parse.urlencode({
         "service": "WFS",
@@ -750,8 +1124,7 @@ def find_best_water(
                 origin,
 
             "source":
-                "LVermGeo Sachsen-Anhalt "
-                "ATKIS HY-P WFS"
+                water_source
         })
 
     if not candidates:
@@ -846,12 +1219,232 @@ def _parse_gml_polygon(poslist_text):
     return polygon
 
 
+
+def _find_neighbour_buildings_niedersachsen(
+    latitude,
+    longitude,
+    radius_m=500,
+    ignore_within_m=20,
+):
+
+    point_x, point_y = (
+        _transform_to_25832.transform(
+            longitude,
+            latitude,
+        )
+    )
+
+    property_point = Point(
+        point_x,
+        point_y,
+    )
+
+    bbox = (
+        f"{point_x - radius_m},"
+        f"{point_y - radius_m},"
+        f"{point_x + radius_m},"
+        f"{point_y + radius_m},"
+        "urn:ogc:def:crs:EPSG::25832"
+    )
+
+    params = urllib.parse.urlencode({
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeNames":
+            NIEDERSACHSEN_BUILDING_TYPENAME,
+        "srsName":
+            "urn:ogc:def:crs:EPSG::25832",
+        "bbox": bbox,
+        "count": 3000,
+    })
+
+    url = (
+        f"{NIEDERSACHSEN_BUILDING_WFS_URL}"
+        f"?{params}"
+    )
+
+    print(
+        "WFS BUILDINGS NI: querying "
+        f"{radius_m} m radius",
+        flush=True,
+    )
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": (
+                "application/gml+xml,"
+                "application/xml,"
+                "text/xml"
+            ),
+        },
+    )
+
+    try:
+
+        with urllib.request.urlopen(
+            request,
+            timeout=30,
+        ) as response:
+
+            raw = response.read()
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            "Niedersachsen Building WFS "
+            "request failed: "
+            f"{type(exc).__name__}: "
+            f"{exc}"
+        ) from exc
+
+    try:
+
+        root = ET.fromstring(
+            raw
+        )
+
+    except ET.ParseError as exc:
+
+        raise RuntimeError(
+            "Niedersachsen Building WFS "
+            f"returned invalid XML: {exc}"
+        ) from exc
+
+    root_name = root.tag.lower()
+
+    if (
+        "exceptionreport" in root_name
+        or "serviceexception" in root_name
+    ):
+
+        error_text = " ".join(
+            value.strip()
+            for value in root.itertext()
+            if value.strip()
+        )
+
+        raise RuntimeError(
+            "Niedersachsen Building WFS "
+            f"error: {error_text}"
+        )
+
+    distances = []
+    polygon_count = 0
+
+    for poslist in root.iter():
+
+        if not poslist.tag.endswith(
+            "posList"
+        ):
+            continue
+
+        polygon = _parse_gml_polygon(
+            poslist.text
+        )
+
+        if polygon is None:
+            continue
+
+        polygon_count += 1
+
+        distance_m = (
+            property_point.distance(
+                polygon
+            )
+        )
+
+        # Eigenes Gebäude / unmittelbar
+        # angrenzende Gebäude ignorieren.
+        if distance_m < ignore_within_m:
+            continue
+
+        if distance_m > radius_m:
+            continue
+
+        distances.append(
+            distance_m
+        )
+
+    distances.sort()
+
+    nearest = (
+        distances[0]
+        if distances
+        else None
+    )
+
+    result = {
+        "nearest_building_m":
+            nearest,
+
+        "buildings_100m": sum(
+            1
+            for distance in distances
+            if distance <= 100
+        ),
+
+        "buildings_250m": sum(
+            1
+            for distance in distances
+            if distance <= 250
+        ),
+
+        "buildings_500m": sum(
+            1
+            for distance in distances
+            if distance <= 500
+        ),
+
+        "feature_count":
+            polygon_count,
+    }
+
+    print(
+        "WFS BUILDINGS NI: "
+        f"{polygon_count} polygon(s) parsed | "
+        f"100m={result['buildings_100m']} | "
+        f"250m={result['buildings_250m']} | "
+        f"500m={result['buildings_500m']}",
+        flush=True,
+    )
+
+    return result
+
+
 def find_neighbour_buildings(
     latitude,
     longitude,
     radius_m=500,
     ignore_within_m=20
 ):
+
+    state_code = _federal_state_code(
+        latitude,
+        longitude,
+    )
+
+    if state_code == "DE-NI":
+
+        return (
+            _find_neighbour_buildings_niedersachsen(
+                latitude,
+                longitude,
+                radius_m=radius_m,
+                ignore_within_m=ignore_within_m,
+            )
+        )
+
+    if state_code != "DE-ST":
+
+        raise GeoCoverageUnavailable(
+            _geo_coverage_message(
+                state_code
+            )
+        )
+
 
     # --------------------------------------------------------
     # Grundstückspunkt in EPSG:25832

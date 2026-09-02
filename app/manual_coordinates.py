@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from monitor import DB_PATH, enrich_property
 from property_types import is_house_type
 from scoring import score_house, score_land
+from geo_precision import (
+    GEO_PRECISION_EXACT,
+    location_has_exact_address,
+    provisional_score_range,
+)
 
 
 def parse_coordinates(value):
@@ -158,6 +163,11 @@ def resolve_manual_location(value):
             "source": "telegram",
             "display_name": None,
         }
+
+    if not location_has_exact_address(
+        value
+    ):
+        return None
 
     geocoded = geocode_manual_address(
         value
@@ -466,6 +476,7 @@ def _recalculate_after_coordinate_change(
         "geocode_query": property_data.get("geocode_query"),
         "geocoded_at": property_data.get("geocoded_at"),
         "geocode_source_location": property_data.get("geocode_source_location"),
+        "geo_precision": property_data.get("geo_precision"),
         "water_distance_km": property_data.get("water_distance_km"),
         "water_class": property_data.get("water_class"),
         "water_width_lower_m": property_data.get("water_width_lower_m"),
@@ -589,6 +600,7 @@ def set_manual_coordinates(
             geocode_query = 'MANUAL',
             geocoded_at = ?,
             geocode_source_location = location,
+            geo_precision = ?,
 
             {reset_sql}
         WHERE id = ?
@@ -601,6 +613,7 @@ def set_manual_coordinates(
             latitude,
             longitude,
             now,
+            GEO_PRECISION_EXACT,
             row["id"],
         )
     )
@@ -636,10 +649,54 @@ def set_manual_coordinates(
         "",
         f"📍 {latitude:.6f}, "
         f"{longitude:.6f}",
-        "",
-        "Wasser, Nachbarn und Lärm "
-        "wurden neu berechnet.",
     ]
+
+    geo_checks = (
+        (
+            "Wasser",
+            p.get("water_score") is not None,
+        ),
+        (
+            "Nachbarn",
+            p.get("neighbour_checked_at") is not None,
+        ),
+        (
+            "Lärm",
+            p.get("noise_checked_at") is not None,
+        ),
+    )
+
+    completed_checks = [
+        label
+        for label, completed in geo_checks
+        if completed
+    ]
+
+    pending_checks = [
+        label
+        for label, completed in geo_checks
+        if not completed
+    ]
+
+    if completed_checks:
+        lines.extend(
+            [
+                "",
+                "Neu berechnet: "
+                + ", ".join(completed_checks)
+                + ".",
+            ]
+        )
+
+    if pending_checks:
+        lines.extend(
+            [
+                "",
+                "Noch technisch offen: "
+                + ", ".join(pending_checks)
+                + ".",
+            ]
+        )
 
     if p.get("score") is not None:
 
@@ -708,6 +765,7 @@ def clear_manual_coordinates(
             geocode_query = NULL,
             geocoded_at = NULL,
             geocode_source_location = NULL,
+            geo_precision = NULL,
 
             {reset_sql}
         WHERE id = ?
@@ -740,7 +798,7 @@ def clear_manual_coordinates(
     conn.close()
 
     lines = [
-        "♻️ Automatische Koordinaten aktiviert",
+        "♻️ Manueller Koordinaten-Override entfernt",
         "",
         row["title"] or portal_id,
         f"ID: {portal_id}",
@@ -760,13 +818,24 @@ def clear_manual_coordinates(
             ]
         )
 
-    lines.extend(
-        [
-            "",
+    lines.append("")
+
+    if p.get("geo_precision") == "exact":
+        lines.append(
             "Wasser, Nachbarn und Lärm "
-            "wurden neu berechnet.",
-        ]
-    )
+            "wurden neu berechnet."
+        )
+    elif p.get("geo_precision") == "locality":
+        lines.append(
+            "📍 Lage nur auf Ortsebene bekannt; "
+            "es wurden keine Geo-Punkte aus einem "
+            "Ortsmittelpunkt berechnet."
+        )
+    else:
+        lines.append(
+            "📍 Keine brauchbare Lage vorhanden; "
+            "das Objekt bleibt im Geo-Labor."
+        )
 
     if p.get("score") is not None:
 
@@ -777,5 +846,21 @@ def clear_manual_coordinates(
         lines.append(
             f"Status: {p.get('rating')}"
         )
+
+    else:
+
+        score_range = provisional_score_range(
+            p
+        )
+
+        if score_range is not None:
+            lines.append(
+                "Score: "
+                f"{score_range[0]}–{score_range[1]} Punkte"
+            )
+
+            lines.append(
+                "Status: vorläufig · Lage nur auf Ortsebene"
+            )
 
     return "\n".join(lines)

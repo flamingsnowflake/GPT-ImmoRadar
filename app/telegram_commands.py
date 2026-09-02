@@ -28,6 +28,10 @@ from telegram_ui import (
     property_action_keyboard as _property_action_keyboard,
 )
 from energy_data import format_energy_summary
+from geo_precision import (
+    conservative_score,
+    provisional_score_range,
+)
 from incomplete_workflow import (
     overview_text as incomplete_overview_text,
     overview_keyboard as incomplete_overview_keyboard,
@@ -42,6 +46,9 @@ from incomplete_workflow import (
     first_geo as incomplete_first_geo,
     geo_text as incomplete_geo_text,
     geo_keyboard as incomplete_geo_keyboard,
+    first_locality as incomplete_first_locality,
+    locality_text as incomplete_locality_text,
+    locality_keyboard as incomplete_locality_keyboard,
 )
 from incomplete_energy import (
     energy_choice_label,
@@ -770,6 +777,33 @@ def _score_details_dict(value):
     return {}
 
 
+def _score_summary_lines(property_data):
+
+    score_range = provisional_score_range(
+        property_data
+    )
+
+    if score_range is not None:
+        return [
+            "Score: "
+            f"{score_range[0]}–{score_range[1]} Punkte",
+            "Status: vorläufig · "
+            "Lage nur auf Ortsebene bekannt",
+        ]
+
+    score = property_data.get("score")
+    rating = property_data.get("rating")
+
+    return [
+        (
+            f"Score: {score}/100"
+            if score is not None
+            else "Score: noch offen"
+        ),
+        f"Status: {rating or '-'}",
+    ]
+
+
 def get_incomplete_rows():
 
     conn = sqlite3.connect(
@@ -1194,6 +1228,24 @@ def format_score_explanation(
                 f"• {reason}"
             )
 
+    elif details.get("provisional"):
+
+        score_range = provisional_score_range(
+            {
+                "score_details": details
+            }
+        )
+
+        if score_range is not None:
+            lines.append(
+                "⭐ "
+                f"{score_range[0]}–{score_range[1]} Punkte"
+            )
+
+        lines.append(
+            "📍 Lage nur auf Ortsebene bekannt"
+        )
+
     elif (
         details.get(
             "rating"
@@ -1461,12 +1513,14 @@ def set_buildability(
             "Wohnbaurecht: ❔ unbekannt"
         )
 
-    text.append(
-        f"Score: {score_result['score']}/100"
-    )
-
-    text.append(
-        f"Status: {score_result['rating']}"
+    text.extend(
+        _score_summary_lines(
+            {
+                "score": score_result.get("score"),
+                "rating": score_result.get("rating"),
+                "score_details": score_result,
+            }
+        )
     )
 
     if score_result["ko"]:
@@ -1560,12 +1614,8 @@ def get_property(portal_id):
 
     lines.append("")
 
-    lines.append(
-        f"Score: {p.get('score')}"
-    )
-
-    lines.append(
-        f"Status: {p.get('rating')}"
+    lines.extend(
+        _score_summary_lines(p)
     )
 
     if p.get("is_ko"):
@@ -2159,7 +2209,21 @@ def format_property_card(
     # Score
     # --------------------------------------------------------
 
-    if p.get("score") is not None:
+    score_range = provisional_score_range(
+        p
+    )
+
+    if score_range is not None:
+
+        lines.append("")
+
+        lines.append(
+            "⭐ "
+            f"{score_range[0]}–{score_range[1]} Punkte"
+            " | 📍 Lage nur auf Ortsebene bekannt"
+        )
+
+    elif p.get("score") is not None:
 
         lines.append("")
 
@@ -2194,55 +2258,10 @@ def format_property_card(
 
 def get_top_properties(property_type, limit=3):
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    if is_house_type(property_type):
-
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM properties
-            WHERE property_type IN ('house', 'farm')
-              AND is_ko = 0
-              AND score IS NOT NULL
-              AND latitude IS NOT NULL
-              AND longitude IS NOT NULL
-              AND water_score IS NOT NULL
-              AND neighbour_class IS NOT NULL
-            ORDER BY
-                score DESC,
-                plot_area DESC,
-                price ASC
-            LIMIT 15
-            """
-        ).fetchall()
-
-    elif property_type == "land":
-
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM properties
-            WHERE property_type = 'land'
-              AND is_ko = 0
-              AND score IS NOT NULL
-              AND latitude IS NOT NULL
-              AND longitude IS NOT NULL
-              AND water_score IS NOT NULL
-              AND neighbour_class IS NOT NULL
-            ORDER BY
-                score DESC,
-                water_score DESC,
-                buildings_100m ASC
-            LIMIT 15
-            """
-        ).fetchall()
-
-    else:
-        rows = []
-
-    conn.close()
+    rows = get_top_property_rows(
+        property_type,
+        max(limit * 5, 15),
+    )
 
     selected = []
 
@@ -2355,6 +2374,7 @@ def find_properties(query, limit=8):
             score,
             rating,
             is_ko,
+            score_details,
             url
         FROM properties
         WHERE
@@ -2428,7 +2448,18 @@ def find_properties(query, limit=8):
                 .replace(",", ".")
             )
 
-        if p["score"] is not None:
+        score_range = provisional_score_range(
+            p
+        )
+
+        if score_range is not None:
+            lines.append(
+                "⭐ "
+                f"{score_range[0]}–{score_range[1]} Punkte"
+                " | 📍 Lage nur auf Ortsebene bekannt"
+            )
+
+        elif p["score"] is not None:
             lines.append(
                 f"⭐ {p['score']}/100 | "
                 f"{p['rating']}"
@@ -2466,14 +2497,11 @@ def get_top_property_rows(
             FROM properties
             WHERE property_type IN ('house', 'farm')
               AND is_ko = 0
-              AND score IS NOT NULL
-            ORDER BY
-                score DESC,
-                plot_area DESC,
-                price ASC
-            LIMIT ?
+              AND (
+                    score IS NOT NULL
+                    OR rating = 'provisional'
+                  )
             """,
-            (max(limit * 5, 15),)
         ).fetchall()
 
     elif property_type == "land":
@@ -2484,18 +2512,17 @@ def get_top_property_rows(
             FROM properties
             WHERE property_type = 'land'
               AND is_ko = 0
-              AND score IS NOT NULL
-              AND latitude IS NOT NULL
-              AND longitude IS NOT NULL
-              AND water_score IS NOT NULL
-              AND neighbour_class IS NOT NULL
-            ORDER BY
-                score DESC,
-                water_score DESC,
-                buildings_100m ASC
-            LIMIT ?
+              AND (
+                    (
+                        score IS NOT NULL
+                        AND latitude IS NOT NULL
+                        AND longitude IS NOT NULL
+                        AND water_score IS NOT NULL
+                        AND neighbour_class IS NOT NULL
+                    )
+                    OR rating = 'provisional'
+                  )
             """,
-            (max(limit * 5, 15),)
         ).fetchall()
 
     else:
@@ -2507,12 +2534,27 @@ def get_top_property_rows(
         CONFIG.blacklist_terms()
     )
 
+    candidates = [
+        dict(row)
+        for row in rows
+    ]
+
+    candidates.sort(
+        key=lambda p: (
+            -conservative_score(p),
+            -(p.get("plot_area") or 0),
+            (
+                p.get("price")
+                if p.get("price") is not None
+                else float("inf")
+            ),
+        )
+    )
+
     selected = []
     seen_house_keys = set()
 
-    for row in rows:
-
-        p = dict(row)
+    for p in candidates:
 
         if get_user_status(
             DB_PATH,
@@ -2617,10 +2659,7 @@ def get_top_property_rows(
 
         selected.append(p)
 
-        if len(selected) >= limit:
-            break
-
-    return selected
+    return selected[:limit]
 
 
 def get_house_chance_rows(limit=3):
@@ -2776,6 +2815,10 @@ def get_house_chance_rows(limit=3):
             potential.get("rating")
         )
 
+        p["_potential_score_details"] = (
+            potential
+        )
+
         p["_search_limit_reasons"] = (
             ko_reasons
         )
@@ -2788,9 +2831,15 @@ def get_house_chance_rows(limit=3):
 
     candidates.sort(
         key=lambda p: (
-            -(
-                p.get("_potential_score")
-                or 0
+            -conservative_score(
+                {
+                    "score": p.get(
+                        "_potential_score"
+                    ),
+                    "score_details": p.get(
+                        "_potential_score_details"
+                    ),
+                }
             ),
             -(
                 p.get("plot_area")
@@ -2985,11 +3034,19 @@ def set_house_condition(portal_id, condition_class):
     conn.commit()
     conn.close()
 
-    return (
-        f"✅ Zustand gesetzt\n\n"
-        f"{CONDITION_MAP[condition_class]}\n"
-        f"Score: {result['score']}/100\n"
-        f"Status: {result['rating']}"
+    return "\n".join(
+        [
+            "✅ Zustand gesetzt",
+            "",
+            CONDITION_MAP[condition_class],
+            *_score_summary_lines(
+                {
+                    "score": result.get("score"),
+                    "rating": result.get("rating"),
+                    "score_details": result,
+                }
+            ),
+        ]
     )
 
 
@@ -3901,7 +3958,7 @@ def handle_message(message):
             )
 
         if (
-            pending_coords.get("number") == "iwg"
+            pending_coords.get("number") in ("iwg", "iwl")
             and pending_coords.get("message_id")
         ):
 
@@ -3941,16 +3998,30 @@ def handle_message(message):
 
         if pending_coords.get(
             "number"
-        ) == "iwg":
+        ) in ("iwg", "iwl"):
 
-            row, total = incomplete_first_geo(
-                DB_PATH
+            locality_workflow = (
+                pending_coords.get("number") == "iwl"
             )
+
+            if locality_workflow:
+                row, total = incomplete_first_locality(
+                    DB_PATH
+                )
+            else:
+                row, total = incomplete_first_geo(
+                    DB_PATH
+                )
 
             if row is None:
 
                 next_text = (
-                    "✅ Geo-Prüfung abgeschlossen.\n\n"
+                    (
+                        "✅ Alle provisorischen Lagen "
+                        "bearbeitet.\n\n"
+                        if locality_workflow
+                        else "✅ Geo-Prüfung abgeschlossen.\n\n"
+                    )
                     + incomplete_overview_text(
                         DB_PATH
                     )
@@ -3964,17 +4035,24 @@ def handle_message(message):
 
             else:
 
-                next_text = incomplete_geo_text(
-                    row,
-                    1,
-                    total,
-                )
-
-                next_keyboard = (
-                    incomplete_geo_keyboard(
+                if locality_workflow:
+                    next_text = incomplete_locality_text(
+                        row,
+                        1,
+                        total,
+                    )
+                    next_keyboard = incomplete_locality_keyboard(
                         row
                     )
-                )
+                else:
+                    next_text = incomplete_geo_text(
+                        row,
+                        1,
+                        total,
+                    )
+                    next_keyboard = incomplete_geo_keyboard(
+                        row
+                    )
 
             message_id = pending_coords.get(
                 "message_id"
@@ -4427,6 +4505,12 @@ def handle_message(message):
                     )
                 )
 
+                display["score_details"] = (
+                    p.get(
+                        "_potential_score_details"
+                    )
+                )
+
 
                 notes = []
 
@@ -4754,6 +4838,7 @@ def handle_callback(callback):
         "iw:condition",
         "iw:energy",
         "iw:geo",
+        "iw:locality",
     ):
 
         try:
@@ -4860,6 +4945,37 @@ def handle_callback(callback):
                 )
 
                 keyboard = incomplete_geo_keyboard(
+                    row
+                )
+
+        elif data == "iw:locality":
+
+            row, total = incomplete_first_locality(
+                DB_PATH
+            )
+
+            if row is None:
+
+                text = (
+                    "✅ Keine provisorischen Lagen mehr.\n\n"
+                    + incomplete_overview_text(
+                        DB_PATH
+                    )
+                )
+
+                keyboard = incomplete_overview_keyboard(
+                    DB_PATH
+                )
+
+            else:
+
+                text = incomplete_locality_text(
+                    row,
+                    1,
+                    total,
+                )
+
+                keyboard = incomplete_locality_keyboard(
                     row
                 )
 

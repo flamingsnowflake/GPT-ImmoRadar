@@ -4,13 +4,15 @@
 **It combines automatic e-mail processing, geo data and human-assisted browser enrichment with a configurable scoring model.**<br>
 **Keep the pipeline, change the search and scoring rules, and use it for your own house hunt.**
 
+> **Private production repository:** this repository is the source of truth for the currently deployed system. The public snapshot is intentionally sanitized and may lag behind production features and scoring semantics. For the exact current behavior, start with `docs/current-state.md`, `docs/scoring.md` and `docs/workflows.md`.
+
 ## What it does
 
 ### 1. Email processing
 
 Property-alert e-mails are read via IMAP, parsed and normalized into a local SQLite database.
 
-The monitor detects new and duplicate listings, extracts portal IDs and listing facts, and keeps one persistent record per property.
+The monitor detects new and duplicate listings, extracts portal IDs and listing facts, and keeps one persistent record per property. Duplicate refreshes may update ordinary portal facts while preserving stronger browser/manual enrichment such as finalized Energy and explicit condition evidence.
 
 ### 2. Telegram bot
 
@@ -18,13 +20,18 @@ Telegram is the main working interface.
 
 It can:
 
-- show new listings and scores;
+- show new listings, provisional ranges and final scores;
 - open the original portal page;
 - search and rank stored properties;
-- mark properties as interesting, offline or not interesting;
+- mark properties as interesting, offline or not interesting without rewriting their intrinsic score;
 - correct incomplete data;
-- run guided review queues ("Labor") for unresolved condition, energy and geo information;
-- automatically advance to the next unresolved property when the current one is completed, blacklisted or removed.
+- import a supported listing by pasting its URL;
+- show/set exact coordinates or an exact address and immediately rerun dependent Geo enrichment;
+- run `/incomplete` as a guided workbench for unresolved Condition, Energy and Address/Geo evidence;
+- offer an optional `Lage präzisieren` queue for promising locality-only properties;
+- automatically advance active Labor sessions when the current item is resolved, blacklisted, removed or otherwise leaves the queue.
+
+The Labor queues are dynamic: they are derived again from current SQLite state rather than treated as a frozen list.
 
 ### 3. Human-assisted browser enrichment
 
@@ -37,7 +44,19 @@ This allows the system to capture things such as:
 - energy class and energy values;
 - explicit property-condition fields;
 - browser-only DOM information;
-- portal messages that an advert has been deleted.
+- portal messages that an advert has been deleted;
+- current-exposé blacklist evidence without letting unrelated recommendation/navigation text poison the decision.
+
+The production loop is intentionally browser-first where strong browser evidence is useful:
+
+```text
+Telegram Labor item
+    -> open exposé once
+    -> Tampermonkey sends rendered evidence
+    -> browser enrichment updates SQLite / score / terminal state
+    -> active Labor observes the change
+    -> same workbench advances automatically
+```
 
 The human remains part of the loop where automation should not pretend to know more than it does.
 
@@ -45,10 +64,22 @@ The human remains part of the loop where automation should not pretend to know m
 
 Listings can be enriched with external geographic data, including:
 
-- **nearby water, not just as a simple distance:** the system looks for nearby mapped water, records the distance and distinguishes the type / significance or size class of the water body where the source data allows it, so a small stream is not treated the same as a substantial river or other major body of water;
+- **nearby water, not just as a simple distance:** the system records distance and distinguishes water type/significance or size class where the source data allows it, so a small stream is not treated the same as a substantial river or other major body of water;
 - surrounding building density and neighbour situation, including whether a property is isolated, loosely developed, on a village edge or in denser development;
 - mapped road, rail and aircraft noise, including day/evening/night and night-time noise levels where available;
-- **for building plots:** planning / development status — for example whether normal residential development is allowed, or whether a building permit, preliminary approval or other useful planning evidence is known.
+- **for building plots:** planning/development status — for example whether normal residential development is allowed, or whether a building permit, preliminary approval or other useful planning evidence is known.
+
+Geo evidence has explicit precision states:
+
+```text
+exact     exact address or manually confirmed coordinates
+locality  locality/postcode known, exact property location unknown
+missing   no usable location evidence
+```
+
+A locality-only object is **not** scored using a town-centre coordinate as though it were the property. It receives a provisional worst/best Geo range and can optionally be processed through `Lage präzisieren` once an exact location becomes known.
+
+Setting an exact address or manual coordinates invalidates the previous derived Geo result and reruns Water, Neighbours and Noise at the new coordinate before rescoring. If one downstream service is temporarily unavailable, the location remains solved; the system does not ask for the same exact address again.
 
 For **existing houses**, planning/development status is not part of the house score. Instead, the important property-specific categories include the **condition of the building** and its **energy performance / energy label**.
 
@@ -58,58 +89,82 @@ These facts are stored separately from the score so the scoring model can be cha
 
 The score is deliberately not a black box. Every category contributes visible points, penalties or KO reasons.
 
-For example, a good house might score like this:
+The most important state rule is:
 
 ```text
-Price + condition       19 / 25
-Plot                    16 / 20
-Neighbours              17 / 25
-Quiet                   15 / 15
-Water                    8 / 10
-Living area              4 / 5
-Energy label "A"         +2      <- bonus
---------------------------------
-Total                    81 / 100  -> very interesting
+None = not checked / unresolved
+0    = checked and legitimately zero
 ```
 
-Energy is deliberately shown as an adjustment rather than as a fixed category worth a certain number of points. A good label can add points; a poor label can subtract them.
+A zero is therefore **data**, not a synonym for missing. Examples include a completed `Lärm: +0` result, `water_score = 0` after a successful search that found no qualifying water, or the neutral Energy adjustment for class D.
 
-A different house can look cheap at first but still rank much lower once condition and energy are taken into account:
+A final numeric total is withheld only while required evidence is genuinely unresolved. A definitive hard KO can still be surfaced immediately.
+
+For houses/farms, the current private base model is:
 
 ```text
-Purchase price          130,000 EUR
-Condition surcharge     +140,000 EUR  (major renovation)
-Effective price         270,000 EUR
-
-Price + condition        9 / 25
-Plot                    11 / 20
-Neighbours               6 / 25
-Quiet                   12 / 15
-Water                    7 / 10
-Living area              3 / 5
-Energy label "H"         -8      <- penalty
---------------------------------
-Total                    40 / 100  -> archive
+Price + condition       25
+Plot                    20
+Neighbours              25
+Quiet                   15
+Water                   10
+Living area              5
+--------------------------
+Base                   100
 ```
 
-In the current model, for example, energy label `A` gives **+2 points**, while label `H` deducts **8 points**. The detailed energy adjustments are configurable and documented with the rest of the scoring model.
+Energy is an adjustment rather than a fixed category. A good label can add points; a poor/uncertain result can subtract them. Current class adjustments are:
 
-Hard exclusions are handled separately. Missing required evidence is **not silently treated as zero**; houses can remain `incomplete` until the relevant category is actually known.
+```text
+A+  +3
+A   +2
+B   +1
+C   +1
+D    0
+E   -1
+F   -3
+G   -5
+H   -8
+```
 
-### 6. Pluggable for another person's search
+Additional Energy states distinguish a truly unresolved certificate (`untested`, `not_available_yet`) from a completed but risky/uncertain result (`checked unknown`, `not_required`, `no_label`).
 
-The current scoring reflects one real-world search, but the system is intentionally configurable.
+#### Noise completion is not the same as a non-zero penalty
 
-You can adapt it for yourself by changing things such as:
+For noise, `noise_checked_at` is the important completion marker. If the check completed and no applicable source penalty exists, `Lärm: +0` is a valid result and an existing house receives full Quiet points.
+
+Likewise, **no mapped EBA rail isophone does not mean an invented low dB value**. When a house/farm has a completed rail check but no EBA isophone at the property, the production scorer can use a conservative distance + annual-traffic fallback when both facts are known. Mapped EBA levels always take precedence; the fallback does not create an automatic KO by itself.
+
+See `docs/scoring.md` for the full current semantics and production values.
+
+### 6. Condition-aware price scoring
+
+The house price score is based on an effective price:
+
+```text
+real purchase price + configured condition surcharge
+```
+
+The hard purchase-price limit still uses the **real purchase price only**.
+
+For example, the current production model treats `good` and `maintained` as a +15,000 EUR allowance, renovation-needed as +80,000 EUR and major renovation as +140,000 EUR. This makes a cheap ruin comparable with a more expensive house that needs little work instead of rewarding asking price in isolation.
+
+Broker-free offers recognized as Ohne-Makler receive a transaction-cost scoring advantage: the real purchase price remains unchanged for hard filters, while scoring treats it as 3% lower and grants at least a +3-point benefit.
+
+### 7. Pluggable for another person's search
+
+The current private scoring reflects one real-world search, but the system is intentionally configurable.
+
+You can adapt it by changing things such as:
 
 - price limits;
 - plot-size preferences;
-- neighbour / isolation importance;
+- neighbour/isolation importance;
 - water importance;
 - noise tolerance;
 - energy penalties;
-- condition / renovation assumptions;
-- **public-transport access or commute time**;
+- condition/renovation assumptions;
+- public-transport access or commute time;
 - score thresholds;
 - blacklist terms;
 - search presets.
@@ -118,9 +173,9 @@ Those categories are not meant to be universal. For an **urban apartment search*
 
 The ingestion, database, Telegram workflow and browser enrichment can remain the same while the enrichment modules and scoring model change.
 
-See `docs/customizing-your-search.md` for concrete adaptation ideas.
+For the current implementation, see `docs/scoring.md`; portable example configuration lives under `config/public/`.
 
-### 7. Manual property import
+### 8. Manual property import
 
 A property does not have to arrive through an alert e-mail.
 
@@ -128,11 +183,20 @@ A listing URL can be pasted directly into Telegram, imported, enriched and score
 
 This is useful for listings found manually, recommendations from friends, or properties from sources that do not provide alert e-mails.
 
-### 8. Queue resilience and deleted listings
+### 9. Queue resilience and deleted listings
 
-The system detects when a portal explicitly says a listing has been removed and can purge it from the active queue.
+The system detects when a rendered portal page explicitly says a listing has been removed and can purge it from the active property set. A network error, CAPTCHA or arbitrary transport failure is not enough to authorize a purge.
 
 Blacklist matches, deleted listings, manual status changes and completed browser enrichment all feed back into the Telegram Labor so the workflow does not get stuck on dead objects.
+
+Browser terminal events distinguish at least:
+
+```text
+blacklisted
+purged
+```
+
+See `docs/workflows.md` for the end-to-end queue behavior.
 
 ## Architecture in one picture
 
@@ -142,12 +206,18 @@ alert e-mail / pasted URL
           v
        monitor
           |
+          +---- automatic parsing / geo enrichment
+          |
           v
        SQLite
           ^
           |
-Telegram bot <------ human review
-          ^
+Telegram bot <------ human review / /incomplete Labor
+          ^                         |
+          |                         +---- exact address/coordinates
+          |                                      |
+          |                                      v
+          |                                geo re-enrich + rescore
           |
 Browser + Tampermonkey
           |
@@ -161,7 +231,7 @@ browser enrichment service
           +-- condition
           +-- blacklist
           +-- deleted listing detection
-          +-- rescore
+          +-- rescore / terminal events
 ```
 
 ## Why AI matters here
@@ -202,14 +272,19 @@ No cloud AI service is required at runtime for scoring or normal operation.
 
 ## Documentation
 
-Detailed documentation lives under `docs/`, including:
+The private production documentation lives under `docs/`:
 
-- architecture;
-- scoring rules;
-- browser enrichment;
-- installation and operations;
-- adapting the enrichment/scoring model to a different search;
-- safe public-release and security notes.
+- `docs/current-state.md` — what is currently implemented/deployed;
+- `docs/scoring.md` — exact scoring, completion and `None`/`0` semantics;
+- `docs/workflows.md` — e-mail/import, Labor, browser, Energy, Condition and Geo workflows;
+- `docs/architecture.md` — component and data-flow architecture;
+- `docs/browser-enrichment.md` — Tampermonkey/browser enrichment pipeline;
+- `docs/decisions.md` — durable behavioral decisions that should not be casually reopened;
+- `docs/operations.md` — restart matrix, tests, migrations and backups;
+- `docs/installation.md` — reference installation;
+- `docs/public-release.md` — safe sanitized public-export process.
+
+`PROJECT.md` is the continuity entry point for future development sessions.
 
 ## Credits
 

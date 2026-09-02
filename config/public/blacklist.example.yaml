@@ -1,0 +1,11 @@
+# Example blacklist profile for public/self-hosted use.
+# Copy to blacklist.yaml and adapt to your own search.
+
+terms:
+  - zwangsversteigerung
+  - auktion
+  - gewerbeobjekt
+  - industriegebiet
+  - landwirtschaftsfläche
+  - waldgrundstück
+  - vermietet

@@ -40,6 +40,11 @@ from telegram_ui import (
 )
 from energy_data import ENERGY_COLUMNS
 from noise_sources import get_noise
+from geo_precision import (
+    GEO_PRECISION_EXACT,
+    normalize_geo_precision,
+    provisional_score_range,
+)
 
 IMAP_HOST = os.environ["IMAP_HOST"]
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
@@ -216,6 +221,7 @@ def get_db():
         "geocode_query": "TEXT",
         "geocoded_at": "TEXT",
         "geocode_source_location": "TEXT",
+        "geo_precision": "TEXT",
         "rail_lden": "REAL",
         "rail_lnight": "REAL",
         "rail_distance_m": "REAL",
@@ -1988,6 +1994,29 @@ def format_property(p, duplicate=False):
                 )
             )
 
+    elif p.get("rating") == "provisional":
+
+        score_range = provisional_score_range(
+            p
+        )
+
+        lines.append("")
+
+        if score_range is not None:
+            lines.append(
+                "⭐ "
+                f"{score_range[0]}–{score_range[1]} Punkte"
+                " | 📍 Lage nur auf Ortsebene bekannt"
+            )
+        else:
+            lines.append(
+                "⭐ Vorläufige Bewertung"
+            )
+
+            lines.append(
+                "📍 Lage nur auf Ortsebene bekannt"
+            )
+
     elif p.get("score") is not None:
 
         lines.append("")
@@ -2341,20 +2370,13 @@ def classify_neighbours(buildings):
     )
 
     # --------------------------------------------------------
-    # Nachbarschaftsbewertung
+    # Echte Alleinlage
     #
-    # Hauptkriterium:
-    #   unmittelbare Bebauung innerhalb 100 m
-    #
-    # nearest_building_m ist nur ein Zusatzsignal, weil ein
-    # einzelner Referenzpunkt große/lange Grundstücke
-    # verzerren kann.
-    #
-    # 250 m wird nur noch zur Unterscheidung sehr lockerer
-    # bzw. echter Alleinlagen benutzt.
+    # Sehr restriktiv lassen:
+    # kein fremdes Gebäude innerhalb 100 m und
+    # höchstens sehr wenige innerhalb 250 m.
     # --------------------------------------------------------
 
-    # Echte Alleinlage
     if (
         b100 == 0
         and b250 <= 5
@@ -2365,35 +2387,57 @@ def classify_neighbours(buildings):
     ):
         return "isolated"
 
-    # Sehr wenige direkte Nachbarn
+    # --------------------------------------------------------
+    # Sehr wenige unmittelbare Nachbarn
+    # --------------------------------------------------------
+
     if (
-        b100 <= 5
-        and b250 <= 25
+        b100 <= 10
+        and b250 <= 50
     ):
         return "few_neighbours"
 
+    # --------------------------------------------------------
     # Lockere Bebauung
+    # --------------------------------------------------------
+
     if (
-        b100 <= 12
+        b100 <= 30
+        and b250 <= 150
     ):
         return "loose_development"
 
-    # Dorfrand / große Grundstücke /
-    # relativ geringe unmittelbare Bebauung
+    # --------------------------------------------------------
+    # Dorfrand / größere Grundstücke /
+    # merklich lockerer als normale Ortslage
+    # --------------------------------------------------------
+
     if (
-        b100 <= 30
+        b100 <= 60
+        and b250 <= 300
     ):
         return "village_edge"
 
+    # --------------------------------------------------------
     # Normale Dorf-/Wohnlage
+    #
+    # Wichtig:
+    # Gebäudepolygone sind keine Haushalte.
+    # Garagen, Schuppen und Nebengebäude werden ebenfalls
+    # gezählt. Deshalb deutlich großzügiger als bisher.
+    # --------------------------------------------------------
+
     if (
-        b100 <= 60
+        b100 <= 100
+        and b250 <= 500
     ):
         return "village"
 
-    return "dense"
+    # --------------------------------------------------------
+    # Wirklich dichte Bebauung
+    # --------------------------------------------------------
 
-# Bebauung checken
+    return "dense"
 
 def classify_buildability(property_data):
 
@@ -2572,13 +2616,29 @@ def enrich_property(conn, property_data):
         property_data
     )
 
+    property_data = normalize_geo_precision(
+        property_data
+    )
+
+    if property_data["geo_precision"] != GEO_PRECISION_EXACT:
+        print(
+            "GEO PRECISION: "
+            f"{property_data['geo_precision']} | "
+            f"{property_data.get('location') or '-'}",
+            flush=True,
+        )
+
     # --------------------------------------------------------
     # Geocoding
     # --------------------------------------------------------
 
     if (
-        property_data.get("latitude") is None
-        or property_data.get("longitude") is None
+        property_data.get("geo_precision")
+        == GEO_PRECISION_EXACT
+        and (
+            property_data.get("latitude") is None
+            or property_data.get("longitude") is None
+        )
     ):
 
         location = property_data.get("location")
@@ -2637,7 +2697,10 @@ def enrich_property(conn, property_data):
                     flush=True
                 )
 
-    else:
+    elif (
+        property_data.get("latitude") is not None
+        and property_data.get("longitude") is not None
+    ):
 
         print(
             f"GEO: cached | "
@@ -2830,7 +2893,9 @@ def enrich_property(conn, property_data):
                 flush=True
             )
 
-    else:
+    elif property_data.get(
+        "neighbour_checked_at"
+    ) is not None:
 
         nearest = property_data.get(
             "nearest_building_m"
@@ -3111,6 +3176,9 @@ def save_property(conn, property_data, source_message_id):
         "geocode_source_location": property_data.get(
             "geocode_source_location"
         ),
+        "geo_precision": property_data.get(
+            "geo_precision"
+        ),
         "source_message_id": source_message_id,
         "now": now,
     }
@@ -3186,6 +3254,7 @@ def save_property(conn, property_data, source_message_id):
                 geocode_query = :geocode_query,
                 geocoded_at = :geocoded_at,
                 geocode_source_location = :geocode_source_location,
+                geo_precision = :geo_precision,
                 last_seen = :now
             WHERE id = :property_id
             """,
@@ -3252,6 +3321,7 @@ def save_property(conn, property_data, source_message_id):
                 geocode_query,
                 geocoded_at,
                 geocode_source_location,
+                geo_precision,
                 first_seen,
                 last_seen,
                 source_message_id
@@ -3310,6 +3380,7 @@ def save_property(conn, property_data, source_message_id):
                 :geocode_query,
                 :geocoded_at,
                 :geocode_source_location,
+                :geo_precision,
                 :now,
                 :now,
                 :source_message_id

@@ -69,6 +69,7 @@ def detect_portal_id(url, source):
         normalized.encode("utf-8")
     ).hexdigest()[:24]
 
+
 def fetch_page(url):
     request = Request(
         url,
@@ -102,6 +103,7 @@ def fetch_page(url):
         final_url,
         source,
     )
+
 
 def parse_number(value):
     if value is None:
@@ -144,6 +146,35 @@ def parse_number(value):
         return float(text)
     except ValueError:
         return None
+
+
+def _preview_blacklist_property_type(
+    object_type,
+):
+    """
+    Leitet nur den Typ ab, den die frühe Blacklist-Prüfung
+    sicher kennen muss.
+
+    Bei Grundstücken dürfen Haustyp-Begriffe wie
+    "Doppelhaushälfte" in einer Nutzungsbeschreibung nicht
+    als Blacklist-Treffer gelten. Andere Typen bleiben hier
+    bewusst unbestimmt und werden später von der normalen
+    Property-Type-Pipeline klassifiziert.
+    """
+
+    normalized = (
+        str(object_type or "")
+        .strip()
+        .lower()
+    )
+
+    if (
+        "grundstück" in normalized
+        or "grundstueck" in normalized
+    ):
+        return "land"
+
+    return None
 
 
 def html_to_text(source):
@@ -573,32 +604,9 @@ def parse_property_page(url):
         or html_to_text(source)
     )
 
-    # --------------------------------------------------------
-    # Property-Typ aus dem Immowelt-Preview ableiten.
-    #
-    # object_type stammt aus Titeln wie:
-    #
-    #   Grundstück 18000 € zum Kauf ...
-    #
-    # Wichtig für die typabhängige Blacklist:
-    # Haustypen wie "Doppelhaushälfte" dürfen bei einem
-    # Grundstück nicht als Blacklist-KO gewertet werden.
-    # --------------------------------------------------------
-
-    property_type = None
-
-    object_type_lower = (
-        object_type
-        or ""
-    ).lower()
-
-    if "grundstück" in object_type_lower:
-        property_type = "land"
-
     property_data = {
         "portal": portal,
         "portal_id": portal_id,
-        "property_type": property_type,
         "url": final_url,
         "title": data.get("title"),
         "location": data.get("location"),
@@ -615,6 +623,7 @@ def parse_property_page(url):
     }
 
     return property_data
+
 
 def get_existing_property(portal, portal_id):
     """
@@ -656,6 +665,7 @@ def get_existing_property(portal, portal_id):
 
     finally:
         conn.close()
+
 
 def import_generic_property_url(url):
     """
@@ -981,8 +991,10 @@ def import_immowelt_url(url):
     if is_blacklisted(
         preview_title,
         preview_description,
-        property_type=property_data.get(
-            "property_type"
+        property_type=(
+            _preview_blacklist_property_type(
+                object_type
+            )
         ),
     ):
 
@@ -1035,6 +1047,7 @@ def import_immowelt_url(url):
 
     finally:
         conn.close()
+
 
 def import_immoscout_url(url):
     """
@@ -1302,8 +1315,10 @@ def import_immoscout_url(url):
     if is_blacklisted(
         preview_title,
         preview_description,
-        property_type=property_data.get(
-            "property_type"
+        property_type=(
+            _preview_blacklist_property_type(
+                object_type
+            )
         ),
     ):
 
@@ -1343,6 +1358,7 @@ def import_immoscout_url(url):
 
     finally:
         conn.close()
+
 
 def _normalize_ohne_makler_facts(
     property_data,
@@ -1678,6 +1694,7 @@ def import_ohne_makler_url(url):
 
         conn.close()
 
+
 def import_property_url(url):
     """
     Zentraler Router für manuell per Telegram
@@ -1693,6 +1710,7 @@ def import_property_url(url):
         raise ValueError(
             "Keine gültige HTTP/HTTPS-URL."
         )
+
     # --------------------------------------------------------
     # Ohne-Makler
     # --------------------------------------------------------
@@ -1726,6 +1744,7 @@ def import_property_url(url):
         return import_immoscout_url(
             url
         )
+
     # --------------------------------------------------------
     # Alle anderen Anbieter zunächst über den
     # generischen Webseitenparser versuchen.

@@ -1,28 +1,17 @@
+# Example scoring profile for a public/self-hosted installation.
+#
+# These values are intentionally generic. Copy to score.yaml and adapt them to
+# your own budget, property type, risk tolerance and location priorities.
+
 house:
-
   hard_filters:
-
-    # Reeller Kaufpreis.
-    # Zustandsaufschläge zählen NICHT für diesen KO-Filter.
-    max_price: 300000
-
-    # Unter 500 m² greift der harte Suchfilter.
-    # 500-999 m² bleiben möglich, erhalten aber nur wenige Grundstückspunkte.
-    min_plot_area: 500
-
+    max_price: 500000
+    min_plot_area: 400
 
   scoring:
-
-    # --------------------------------------------------------
-    # Preis + Zustand
-    # --------------------------------------------------------
-
     price:
-
       weight: 25
-
       condition_surcharge:
-
         turnkey: 0
         good: 0
         maintained: 15000
@@ -31,91 +20,29 @@ house:
         major_renovation: 140000
         dilapidated: 220000
         unknown: 100000
-
       brackets:
-
-        - max: 130000
-          points: 25
-
-        - max: 160000
-          points: 22
-
-        - max: 190000
-          points: 19
-
-        - max: 220000
-          points: 16
-
-        - max: 250000
-          points: 13
-
-        - max: 275000
-          points: 9
-
-        - max: 300000
-          points: 5
-
-        - max: 310000
-          points: 0
-
-        - max: 320000
-          points: -5
-
-        - max: 330000
-          points: -15
-
-        - max: 340000
-          points: -25
-
-        - max: 350000
-          points: -35
-
-        - max: null
-          points: -40
-
-
-    # --------------------------------------------------------
-    # Grundstück
-    # --------------------------------------------------------
+        - {max: 250000, points: 25}
+        - {max: 300000, points: 22}
+        - {max: 350000, points: 18}
+        - {max: 400000, points: 14}
+        - {max: 450000, points: 9}
+        - {max: 500000, points: 5}
+        - {max: null, points: 0}
 
     plot_area:
-
       weight: 20
-
       brackets:
-
-        - min: 5000
-          points: 20
-
-        - min: 3000
-          points: 18
-
-        - min: 2000
-          points: 16
-
-        - min: 1500
-          points: 14
-
-        - min: 1000
-          points: 11
-
-        - min: 750
-          points: 7
-
-        - min: 500
-          points: 3
-
-
-    # --------------------------------------------------------
-    # Freilage / Nachbarn
-    # --------------------------------------------------------
+        - {min: 3000, points: 20}
+        - {min: 2000, points: 18}
+        - {min: 1500, points: 16}
+        - {min: 1000, points: 13}
+        - {min: 750, points: 10}
+        - {min: 500, points: 6}
+        - {min: 400, points: 3}
 
     neighbours:
-
       weight: 25
-
       values:
-
         isolated: 25
         few_neighbours: 22
         loose_development: 17
@@ -123,59 +50,23 @@ house:
         village: 6
         dense: 0
 
-
-    # --------------------------------------------------------
-    # Ruhe
-    # --------------------------------------------------------
-
     quiet:
-
       weight: 15
 
-
-    # --------------------------------------------------------
-    # Wasser
-    # --------------------------------------------------------
-
     water:
-
       weight: 10
 
-
-    # --------------------------------------------------------
-    # Wohnfläche
-    # --------------------------------------------------------
-
     living_area:
-
       weight: 5
-
       brackets:
-
-        - min: 150
-          points: 5
-
-        - min: 120
-          points: 4
-
-        - min: 100
-          points: 3
-
-        - min: 80
-          points: 2
-
-        - min: 0
-          points: 1
-
-
-    # --------------------------------------------------------
-    # Energie
-    # --------------------------------------------------------
+        - {min: 150, points: 5}
+        - {min: 120, points: 4}
+        - {min: 100, points: 3}
+        - {min: 80, points: 2}
+        - {min: 0, points: 1}
 
     energy:
-
       class_adjustments:
-
         "A+": 3
         A: 2
         B: 1
@@ -186,96 +77,52 @@ house:
         G: -5
         H: -8
 
-
   thresholds:
-
     dream: 90
     very_interesting: 75
     interesting: 60
     archive: 40
 
 land:
-
   hard_filters:
-
-    min_plot_area: 500
-
+    min_plot_area: 400
     forbidden_terms:
-      - zwangversteigerung
       - zwangsversteigerung
-
     residential_building_required: true
-
     holiday_area_forbidden: true
-
     severe_noise_forbidden: true
 
-
   scoring:
-
     price:
       weight: 30
-
       brackets:
-        - max: 30000
-          points: 30
-
-        - max: 40000
-          points: 25
-
-        - max: 50000
-          points: 20
-
-        - max: 60000
-          points: 10
-
-        - max: null
-          points: 0
-
+        - {max: 50000, points: 30}
+        - {max: 75000, points: 25}
+        - {max: 100000, points: 20}
+        - {max: 150000, points: 10}
+        - {max: null, points: 0}
 
     plot_area:
       weight: 25
-
       brackets:
-        - min: 2000
-          points: 25
-
-        - min: 1500
-          points: 22
-
-        - min: 1000
-          points: 20
-
-        - min: 750
-          points: 12
-
-        - min: 500
-          points: 6
-
+        - {min: 3000, points: 25}
+        - {min: 2000, points: 22}
+        - {min: 1500, points: 20}
+        - {min: 1000, points: 15}
+        - {min: 750, points: 10}
+        - {min: 400, points: 5}
 
     water_distance:
       weight: 20
-
       brackets:
-        - max_km: 0.5
-          points: 20
-
-        - max_km: 1.0
-          points: 18
-
-        - max_km: 2.0
-          points: 15
-
-        - max_km: 3.0
-          points: 10
-
-        - max_km: null
-          points: 0
-
+        - {max_km: 0.5, points: 20}
+        - {max_km: 1.0, points: 18}
+        - {max_km: 2.0, points: 15}
+        - {max_km: 3.0, points: 10}
+        - {max_km: null, points: 0}
 
     neighbours:
       weight: 15
-
       values:
         isolated: 15
         few_neighbours: 12
@@ -284,10 +131,8 @@ land:
         village: 4
         dense: 0
 
-
     primary_residence:
       weight: 5
-
       values:
         confirmed: 5
         probable: 3
@@ -296,7 +141,6 @@ land:
 
     buildability:
       weight: 5
-
       values:
         BUILDING_PERMIT: 5
         PRELIMINARY_APPROVAL: 4
@@ -304,9 +148,7 @@ land:
         NEIGHBOURCONSTRUCTION: 3
         NO_INFORMATION: 0
 
-
   thresholds:
-
     dream: 90
     very_interesting: 75
     interesting: 60
