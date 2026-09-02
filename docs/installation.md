@@ -121,7 +121,7 @@ Keep these principles:
 
 ## Tampermonkey
 
-The private production repo archives the exact tested 1.3.1 userscript. Public exports generate a sanitized copy.
+Production deployments may archive the exact tested userscript privately for reproducibility. The public distribution contains a sanitized, portable copy.
 
 Install the `.user.js` in Tampermonkey, configure your own endpoint(s), then enter the Energy/browser tokens when prompted. Token values are stored by Tampermonkey, not committed to source.
 

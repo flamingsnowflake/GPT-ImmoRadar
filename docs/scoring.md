@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-02
 
-This document describes the **private production scoring model**. The authoritative implementation is `app/scoring.py` together with `config/score.yaml`; the public repository may intentionally lag behind this state.
+This document describes the **reference scoring model** shipped with this release. The implementation is `app/scoring.py` together with `config/score.yaml`.
 
 ## State first, score second
 
@@ -40,7 +40,7 @@ Per-property user status (`active`, `offline`, `not_interested`) is separate fro
 
 ## House / farm model
 
-The current private house/farm hard filters include:
+The reference house/farm hard filters include:
 
 ```text
 real purchase price <= 300,000 EUR

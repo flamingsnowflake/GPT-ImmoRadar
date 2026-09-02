@@ -1,6 +1,6 @@
 # Immobilien Monitor — Project Continuity
 
-This repository is the durable source of truth for the private production history and current production behavior of GPT-ImmoRadar. The public repository is a sanitized distribution snapshot and may intentionally lag behind private scoring/workflow changes.
+This repository is the public distribution of GPT-ImmoRadar. It contains sanitized source code, reference configuration and documentation for self-hosting and adaptation.
 
 ## Purpose
 
@@ -106,17 +106,15 @@ For missing exact Geo, verified address/coordinate input triggers a full Water +
 
 See `docs/workflows.md` for the end-to-end production workflows.
 
-## Public-release policy
+## Release provenance
 
-Do not make this historical production repository public in-place.
+This public repository is generated from a sanitized, history-free snapshot of the development and production source. Secrets, runtime data, production endpoints, personal contact data and machine-specific details are intentionally excluded or replaced with examples.
 
-A public release must be created from a newly generated, history-free snapshot after privacy and secret checks. Production endpoints, personal contact data and machine-specific details must be replaced with configuration/examples.
-
-See `docs/public-release.md`.
+See `docs/public-release.md` for the publication model.
 
 ## Documentation map
 
-- `README.md` — project overview and private-production entry point
+- `README.md` — project overview and getting-started entry point
 - `docs/current-state.md` — current implemented/deployed state
 - `docs/scoring.md` — current scoring, completion, zero-value and Geo-provisional semantics
 - `docs/workflows.md` — ingestion, `/incomplete`, browser, Energy, Condition and Geo workflows

@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-02
 
-This document describes the workflows currently used in the **private production repository**. They are intentionally more detailed than the portable public snapshot.
+This document describes the workflows represented by this public release. Deployment-specific credentials, runtime data and private infrastructure details are intentionally omitted.
 
 ## 1. Ingestion paths
 

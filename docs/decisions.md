@@ -237,7 +237,7 @@ Reasons:
 - source releases should contain configuration examples, not the operator's runtime identity;
 - a fresh initial commit gives a clear privacy boundary that can be audited.
 
-The private repository remains the complete production archive. The public repository becomes a portable product/source distribution.
+Operational history remains private while the public repository provides a portable product/source distribution.
 
 Before publication, rotate credentials that have ever been exposed in terminal/debug output as defense in depth, even if they were never committed.
 

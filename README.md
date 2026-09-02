@@ -4,8 +4,6 @@
 **It combines automatic e-mail processing, geo data and human-assisted browser enrichment with a configurable scoring model.**<br>
 **Keep the pipeline, change the search and scoring rules, and use it for your own house hunt.**
 
-> **Private production repository:** this repository is the source of truth for the currently deployed system. The public snapshot is intentionally sanitized and may lag behind production features and scoring semantics. For the exact current behavior, start with `docs/current-state.md`, `docs/scoring.md` and `docs/workflows.md`.
-
 ## What it does
 
 ### 1. Email processing
@@ -100,7 +98,7 @@ A zero is therefore **data**, not a synonym for missing. Examples include a comp
 
 A final numeric total is withheld only while required evidence is genuinely unresolved. A definitive hard KO can still be surfaced immediately.
 
-For houses/farms, the current private base model is:
+For houses/farms, the reference base model is:
 
 ```text
 Price + condition       25
@@ -113,7 +111,7 @@ Living area              5
 Base                   100
 ```
 
-Energy is an adjustment rather than a fixed category. A good label can add points; a poor/uncertain result can subtract them. Current class adjustments are:
+Energy is an adjustment rather than a fixed category. A good label can add points; a poor/uncertain result can subtract them. Reference class adjustments are:
 
 ```text
 A+  +3
@@ -133,9 +131,9 @@ Additional Energy states distinguish a truly unresolved certificate (`untested`,
 
 For noise, `noise_checked_at` is the important completion marker. If the check completed and no applicable source penalty exists, `Lärm: +0` is a valid result and an existing house receives full Quiet points.
 
-Likewise, **no mapped EBA rail isophone does not mean an invented low dB value**. When a house/farm has a completed rail check but no EBA isophone at the property, the production scorer can use a conservative distance + annual-traffic fallback when both facts are known. Mapped EBA levels always take precedence; the fallback does not create an automatic KO by itself.
+Likewise, **no mapped EBA rail isophone does not mean an invented low dB value**. When a house/farm has a completed rail check but no EBA isophone at the property, the scorer can use a conservative distance + annual-traffic fallback when both facts are known. Mapped EBA levels always take precedence; the fallback does not create an automatic KO by itself.
 
-See `docs/scoring.md` for the full current semantics and production values.
+See `docs/scoring.md` for the full reference semantics and values.
 
 ### 6. Condition-aware price scoring
 
@@ -153,7 +151,7 @@ Broker-free offers recognized as Ohne-Makler receive a transaction-cost scoring 
 
 ### 7. Pluggable for another person's search
 
-The current private scoring reflects one real-world search, but the system is intentionally configurable.
+The included reference scoring reflects one real-world search, but the system is intentionally configurable.
 
 You can adapt it by changing things such as:
 
@@ -173,7 +171,7 @@ Those categories are not meant to be universal. For an **urban apartment search*
 
 The ingestion, database, Telegram workflow and browser enrichment can remain the same while the enrichment modules and scoring model change.
 
-For the current implementation, see `docs/scoring.md`; portable example configuration lives under `config/public/`.
+For the reference implementation, see `docs/scoring.md`; portable example configuration lives under `config/public/`.
 
 ### 8. Manual property import
 
@@ -272,7 +270,7 @@ No cloud AI service is required at runtime for scoring or normal operation.
 
 ## Documentation
 
-The private production documentation lives under `docs/`:
+Documentation lives under `docs/`:
 
 - `docs/current-state.md` — what is currently implemented/deployed;
 - `docs/scoring.md` — exact scoring, completion and `None`/`0` semantics;

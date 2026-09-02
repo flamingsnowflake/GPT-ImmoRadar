@@ -17,7 +17,7 @@ Telegram Labor item
     -> same Telegram card advances automatically
 ```
 
-The private repository is the production source of truth. The sanitized public repository can lag behind this document, especially for scoring semantics, Geo precision and Labor workflows.
+This document describes the implementation state represented by this public release.
 
 ## `/incomplete` Labor
 

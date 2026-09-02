@@ -64,7 +64,7 @@ Production version:
 1.3.1
 ```
 
-Canonical private-production archive:
+Canonical production archive:
 
 ```text
 userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.1.zip
@@ -239,10 +239,10 @@ browser purge
 - Host service binds locally in the reference deployment.
 - Internet exposure should be through a controlled reverse proxy.
 - Browser captures/inbox payloads are runtime data and ignored by Git.
-- Public releases must not hardcode the private production endpoint.
+- Public releases must not hardcode an operator-specific production endpoint.
 
 ## Public version
 
-The exact 1.3.1 archive is retained in the private production repo for reproducibility. A public export should generate a portable userscript with configurable endpoint(s), so forks do not accidentally send their property pages to another operator's server.
+An operator may retain the exact tested userscript archive privately for reproducibility. The public distribution uses a portable userscript with configurable endpoint(s), so forks do not accidentally send their property pages to another operator's server.
 
 See `docs/public-release.md`.

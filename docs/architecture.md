@@ -6,7 +6,7 @@ GPT-ImmoRadar is a Python/SQLite real-estate decision-support system with four D
 
 The system intentionally separates automatic evidence collection from human decisions. Automatic parsers may fill fields only when the evidence is strong enough; unresolved items stay in Telegram Labor queues instead of being silently treated as zero.
 
-The private production repository distinguishes **evidence state** from **numeric value** throughout the pipeline. In particular, `None` can mean unresolved while `0` can be a fully checked result. See `docs/scoring.md`.
+The implementation distinguishes **evidence state** from **numeric value** throughout the pipeline. In particular, `None` can mean unresolved while `0` can be a fully checked result. See `docs/scoring.md`.
 
 ## Main data flow
 
@@ -166,7 +166,7 @@ Its responsibilities include:
 - displaying browser enrichment status;
 - retaining an explicit manual Energy fallback.
 
-The exact production build is archived under `userscripts/archive/`. Public releases must use configurable endpoints instead of a private production hostname.
+The exact production build is archived under `userscripts/archive/`. Public releases must use configurable endpoints instead of an operator-specific production hostname.
 
 ## Browser terminal events
 
