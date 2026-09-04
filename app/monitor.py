@@ -108,8 +108,27 @@ def is_blacklisted(*values, property_type=None):
             "doppelhaushälfte"
         )
 
+    # --------------------------------------------------------
+    # Negierte Blacklist-Begriffe neutralisieren.
+    #
+    # Beispiel:
+    #   "Aktuelle Nutzung: Nicht vermietet"
+    #
+    # Darf nicht wegen des Teilstrings "vermietet"
+    # auf der Blacklist landen.
+    # --------------------------------------------------------
+
+    blacklist_text = text
+
+    blacklist_text = re.sub(
+        r"\bnicht\s+vermietet\b",
+        " ",
+        blacklist_text,
+        flags=re.IGNORECASE,
+    )
+
     return any(
-        term in text
+        term in blacklist_text
         for term in CONFIG.blacklist_terms()
         if term not in ignored_terms
     )
@@ -2607,6 +2626,8 @@ def _geocode_location_with_fallback(
 
 def enrich_property(conn, property_data):
 
+    property_data["_geo_errors"] = {}
+
     # --------------------------------------------------------
     # Existing enrichment data from SQLite
     # --------------------------------------------------------
@@ -2796,6 +2817,7 @@ def enrich_property(conn, property_data):
 
         except Exception as exc:
 
+            property_data["_geo_errors"]["Wasser"] = f"{type(exc).__name__}: {exc}"[:350]
             print(
                 f"WATER ERROR: "
                 f"{type(exc).__name__}: {exc}",
@@ -2887,6 +2909,7 @@ def enrich_property(conn, property_data):
 
         except Exception as exc:
 
+            property_data["_geo_errors"]["Nachbarn"] = f"{type(exc).__name__}: {exc}"[:350]
             print(
                 f"NEIGHBOUR ERROR: "
                 f"{type(exc).__name__}: {exc}",
@@ -2998,6 +3021,7 @@ def enrich_property(conn, property_data):
 
         except Exception as exc:
 
+            property_data["_geo_errors"]["Lärm/Bahn"] = f"{type(exc).__name__}: {exc}"[:350]
             print(
                 f"NOISE ERROR: "
                 f"{type(exc).__name__}: {exc}",

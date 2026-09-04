@@ -42,7 +42,7 @@ class HouseFamilyTest(unittest.TestCase):
             "Grundstück",
         )
 
-    def test_property_id_is_clickable(self):
+    def test_coordinate_button_preserves_property_context(self):
         keyboard = property_action_keyboard(
             "2593e8ff-d559-4c8d-ae86-7e8523c1138b",
             "house",
@@ -56,12 +56,12 @@ class HouseFamilyTest(unittest.TestCase):
 
         self.assertEqual(
             first_button["text"],
-            "🆔 2593e8ff-d559-4c8d-ae86-7e8523c1138b",
+            "📍 Koordinaten",
         )
 
         self.assertEqual(
             first_button["callback_data"],
-            "property:"
+            "coords:"
             "2593e8ff-d559-4c8d-ae86-7e8523c1138b:"
             "house:new",
         )
@@ -236,8 +236,11 @@ class HouseFamilyTest(unittest.TestCase):
             218,
         )
 
+        from unittest.mock import MagicMock
+        conn = MagicMock()
+        conn.execute.return_value.fetchone.return_value = None
         result = monitor.process_property(
-            object(),
+            conn,
             {
                 "portal": "immoscout24",
                 "portal_id": "170214291",
@@ -247,7 +250,8 @@ class HouseFamilyTest(unittest.TestCase):
         )
 
         classify_house_condition.assert_called_once()
-        score_house.assert_called_once()
+        score_house.assert_called()
+        self.assertTrue(all(call.args[0]['property_type'] == 'farm' for call in score_house.call_args_list))
 
         self.assertEqual(
             result["property_data"]["property_type"],
@@ -265,7 +269,7 @@ class HouseFamilyTest(unittest.TestCase):
         )
 
     def test_top_house_rows_include_farms(self):
-        with tempfile.NamedTemporaryFile() as tmp:
+        with tempfile.NamedTemporaryFile(delete_on_close=False) as tmp:
             conn = sqlite3.connect(tmp.name)
 
             conn.execute(
@@ -346,6 +350,9 @@ class HouseFamilyTest(unittest.TestCase):
                 rows,
             )
 
+            conn.execute("ALTER TABLE properties ADD COLUMN rating TEXT DEFAULT 'interesting'")
+            conn.execute('ALTER TABLE properties ADD COLUMN score_details TEXT')
+            conn.execute('ALTER TABLE properties ADD COLUMN id INTEGER')
             conn.commit()
             conn.close()
 

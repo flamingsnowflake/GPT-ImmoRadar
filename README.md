@@ -143,7 +143,7 @@ The house price score is based on an effective price:
 real purchase price + configured condition surcharge
 ```
 
-The hard purchase-price limit still uses the **real purchase price only**.
+The hard house budget includes the **purchase price plus known necessary condition costs**. Unknown condition estimates remain open pending review; scoring bonuses cannot bypass the budget.
 
 For example, the current production model treats `good` and `maintained` as a +15,000 EUR allowance, renovation-needed as +80,000 EUR and major renovation as +140,000 EUR. This makes a cheap ruin comparable with a more expensive house that needs little work instead of rewarding asking price in isolation.
 

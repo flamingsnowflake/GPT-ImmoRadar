@@ -203,7 +203,11 @@ def normalize_energy_data(data):
     # Eindeutige Energieklasse oder kWh-Wert beweisen verfügbare Energiedaten.
     # Ein Portal-/Userscript-Status "not_available_yet" darf niemals
     # gleichzeitig mit einer Klasse oder einem Verbrauch/Bedarf bestehen.
-    if (
+    if status in {'not_required', 'no_label'}:
+        energy_class = None
+        energy_value_kwh = None
+        certificate_type = 'unknown'
+    elif (
         energy_class is not None
         or energy_value_kwh is not None
     ):

@@ -148,6 +148,10 @@ class IncompleteWorkflowTest(unittest.TestCase):
             rows,
         )
 
+        # Canonical energy columns determine completion, not stale score_details.
+        conn.execute('ALTER TABLE properties ADD COLUMN energy_updated_at TEXT')
+        conn.execute('ALTER TABLE properties ADD COLUMN energy_certificate_status TEXT')
+        conn.execute("UPDATE properties SET energy_updated_at='checked', energy_certificate_status='available' WHERE portal_id='B'")
         conn.commit()
         conn.close()
 
@@ -214,7 +218,7 @@ class IncompleteWorkflowTest(unittest.TestCase):
         self.assertIn("iwe:A:ny", callbacks)
         self.assertIn("iw:menu", callbacks)
 
-    def test_energy_text_explains_no_data_is_completed_check(self):
+    def test_energy_text_describes_browser_first_workflow(self):
 
         row = energy_rows(self.db_path)[0]
 
@@ -225,11 +229,11 @@ class IncompleteWorkflowTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "Keine Angabe",
+            "Browserprüfung",
             text,
         )
         self.assertIn(
-            "nicht mehr unvollständig",
+            "automatisch zum nächsten offenen Objekt",
             text,
         )
 

@@ -5,6 +5,7 @@
 
 house:
   hard_filters:
+    # Purchase price plus known necessary condition costs; unknown condition stays open.
     max_price: 500000
     min_plot_area: 400
 

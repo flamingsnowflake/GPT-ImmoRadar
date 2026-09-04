@@ -49,6 +49,7 @@ from incomplete_workflow import (
     first_locality as incomplete_first_locality,
     locality_text as incomplete_locality_text,
     locality_keyboard as incomplete_locality_keyboard,
+    locality_rows as incomplete_locality_rows,
 )
 from incomplete_energy import (
     energy_choice_label,
@@ -57,6 +58,14 @@ from incomplete_energy import (
 )
 from energy_lab_auto import (
     next_energy_action,
+)
+from locality_lab import LocalityLab
+from dog_tax_store import (
+    database as dog_tax_database,
+    load_stored_tariff,
+    property_tax_text,
+    research_queue as dog_tax_research_queue,
+    save_assignment_and_tariff,
 )
 from lab_terminal import (
     get_terminal_event,
@@ -111,6 +120,53 @@ BUILDABILITY_MAP = {
 
 PENDING_COORDINATES = {}
 PENDING_ENERGY_VALUES = {}
+PENDING_DOG_TAX = {}
+LOCALITY_LAB = LocalityLab()
+SKIPPED_LOCALITY_LAB = LOCALITY_LAB.skipped
+
+
+def refresh_active_locality_lab(prefix=None, check_terminal=True):
+    session = LOCALITY_LAB.session
+    if not session:
+        return False
+    terminal = get_terminal_event(
+        DB_PATH, session['portal'], session['portal_id'],
+        since=session['started_at'],
+    ) if check_terminal else None
+    status = (terminal or {}).get('status')
+    action, row, total = LOCALITY_LAB.next_action(
+        incomplete_locality_rows(DB_PATH), status,
+    )
+    if action == 'wait':
+        return False
+    if prefix is None:
+        prefix = {
+            'purged': '🗑 Objekt auf dem Portal nicht mehr verfügbar – entfernt.\n\n',
+            'blacklisted': '🚫 Objekt wurde blacklisted.\n\n',
+        }.get(status, '➡️ Weiter zur nächsten offenen Lage.\n\n')
+    if row is None:
+        text = prefix + '✅ Keine weiteren Lagen in diesem Durchgang.\n\n' + incomplete_overview_text(DB_PATH)
+        keyboard = incomplete_overview_keyboard(DB_PATH)
+    else:
+        text = prefix + incomplete_locality_text(row, 1, total)
+        keyboard = incomplete_locality_keyboard(row)
+    try:
+        telegram_api('editMessageText', {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'message_id': session['message_id'],
+            'text': text,
+            'disable_web_page_preview': 'true',
+            'reply_markup': json.dumps(keyboard),
+        })
+    except Exception as exc:
+        print(f'LOCALITY LAB AUTO ADVANCE ERROR: {exc}', flush=True)
+        return False
+    for chat_id, pending in list(PENDING_COORDINATES.items()):
+        if pending.get('number') == 'iwl' and pending.get('portal_id') == session['portal_id']:
+            PENDING_COORDINATES.pop(chat_id, None)
+    LOCALITY_LAB.track(session['message_id'], row)
+    print(f"LOCALITY LAB AUTO ADVANCE: {session['portal_id']} -> {(row or {}).get('portal_id', 'done')}", flush=True)
+    return True
 
 # Aktive Energie-Labor-Karte.
 # Während sie aktiv ist, wird der Telegram-Long-Poll kurz
@@ -1150,6 +1206,9 @@ def format_score_explanation(
         "",
     ]
 
+    for module, error in (details.get('geo_errors') or {}).items():
+        lines.append(f'⚠️ {module}: {error}')
+
     shown_missing = set()
 
     for reason in details.get(
@@ -1342,6 +1401,7 @@ from manual_coordinates import (
     get_coordinate_status,
     resolve_manual_location,
     set_manual_coordinates,
+    rescan_geo,
 )
 
 
@@ -1352,6 +1412,8 @@ def property_details_keyboard(
 ):
 
     rows = [
+        [{"text": "🔄 Geo neu berechnen",
+          "callback_data": f"geo_rescan:{portal_id}:{property_type}:{number}"}],
         [
             {
                 "text": "⬅ Zurück",
@@ -1360,6 +1422,12 @@ def property_details_keyboard(
             }
         ]
     ]
+
+    if is_house_type(property_type):
+        rows.insert(1, [{
+            "text": "🐕 Hundesteuer prüfen",
+            "callback_data": f"dt:start:{portal_id}",
+        }])
 
     if property_type == "land":
         rows.extend(
@@ -1529,7 +1597,7 @@ def set_buildability(
     return "\n".join(text)
 
 
-def get_property(portal_id):
+def get_property_data(portal_id):
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -1549,17 +1617,22 @@ def get_property(portal_id):
 
     conn.close()
 
-    if not row:
+    return dict(row) if row else None
+
+
+def get_property(portal_id):
+
+    p = get_property_data(portal_id)
+
+    if not p:
         return (
             f"❌ Objekt {portal_id} "
             f"nicht gefunden."
         )
 
-    p = dict(row)
-
     return format_property_card(
         p
-    )
+    ) + '\n\n' + property_tax_text(DB_PATH, p)
 
     lines = [
         f"🏠 {p.get('title') or portal_id}",
@@ -2334,7 +2407,7 @@ def get_top_properties(property_type, limit=3):
 
     return "\n".join(lines).strip()
 
-def find_properties(query, limit=8):
+def find_properties(query, limit=8, with_keyboard=False):
 
     query = (
         query
@@ -2343,7 +2416,7 @@ def find_properties(query, limit=8):
 
     if not query:
 
-        return (
+        text = (
             "Verwendung:\n"
             "/find <Suchtext>\n\n"
             "Beispiele:\n"
@@ -2351,6 +2424,7 @@ def find_properties(query, limit=8):
             "/find Dreiseitenhof\n"
             "/find 170130421"
         )
+        return (text, None) if with_keyboard else text
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -2402,10 +2476,11 @@ def find_properties(query, limit=8):
 
     if not rows:
 
-        return (
+        text = (
             "❌ Kein Objekt gefunden für:\n"
             f"{query}"
         )
+        return (text, None) if with_keyboard else text
 
     lines = [
         f"🔎 Suche: {query}",
@@ -2479,7 +2554,25 @@ def find_properties(query, limit=8):
 
         lines.append("")
 
-    return "\n".join(lines).strip()
+    text = "\n".join(lines).strip()
+
+    if not with_keyboard:
+        return text
+
+    keyboard = {
+        "inline_keyboard": [
+            [{
+                "text": f"🏠 Details {number}",
+                "callback_data": (
+                    f"property:{row['portal_id']}:"
+                    f"{row['property_type']}:find"
+                ),
+            }]
+            for number, row in enumerate(rows, 1)
+        ]
+    }
+
+    return text, keyboard
 
 def get_top_property_rows(
     property_type,
@@ -2662,200 +2755,63 @@ def get_top_property_rows(
     return selected[:limit]
 
 
-def get_house_chance_rows(limit=3):
+def get_chance_rows(property_type, limit=3, excluded_ids=()):
+    from chances import max_reachable_score, CHANCE_THRESHOLD
 
-    """
-    Häuser/Höfe, die ausschließlich wegen
-
-      - Kaufpreis > Suchgrenze
-      - Grundstück < Suchgrenze
-
-    KO sind.
-
-    Andere KO-Gründe bleiben KO.
-
-    Der Potenzial-Score wird nur berechnet
-    und NICHT in die Datenbank geschrieben.
-    """
-
-    import json
-
-    from scoring import score_house
-
-
-    conn = sqlite3.connect(
-        DB_PATH
-    )
-
-    conn.row_factory = (
-        sqlite3.Row
-    )
-
-
-    rows = conn.execute(
-        """
-        SELECT *
-        FROM properties
-        WHERE property_type IN (
-            'house',
-            'farm'
-        )
-          AND COALESCE(is_ko, 0) = 1
-          AND COALESCE(rating, '') = 'ko'
-        """
-    ).fetchall()
-
-
-    conn.close()
-
-
-    allowed_prefixes = (
-        "Kaufpreis ",
-        "Grundstück nur ",
-    )
-
-
+    types = ('house', 'farm') if is_house_type(property_type) else ('land',)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM properties WHERE property_type IN ("
+            + ','.join('?' for _ in types) + ") "
+            "AND COALESCE(rating, '') NOT IN ('blacklisted', 'deleted')", types,
+        ).fetchall()
+    finally:
+        conn.close()
     candidates = []
-
-
+    seen = set(excluded_ids)
     for row in rows:
-
         p = dict(row)
-
-        if get_user_status(
-            DB_PATH,
-            p.get("portal_id"),
-        ) != "active":
+        portal_id = p.get('portal_id')
+        if portal_id in seen or get_user_status(DB_PATH, portal_id) != 'active':
             continue
-
-
         try:
-
-            details = json.loads(
-                p.get("score_details")
-                or "{}"
-            )
-
-        except (
-            TypeError,
-            ValueError,
-            json.JSONDecodeError,
-        ):
-
+            details = json.loads(p.get('score_details') or '{}')
+        except (TypeError, ValueError):
             details = {}
-
-
-        # Browser-/Blacklist-KO niemals
-        # als Verhandlungschance anzeigen.
-        if details.get(
-            "blacklisted"
-        ) is True:
-
+        if details.get('blacklisted') or p.get('is_ko'):
             continue
-
-
-        ko_reasons = (
-            details.get("ko_reasons")
-            or []
-        )
-
-
-        if not ko_reasons:
+        maximum = max_reachable_score(p)
+        if maximum is None or maximum <= CHANCE_THRESHOLD:
             continue
-
-
-        # Grundstück kann man nicht verhandeln.
-        #
-        # Deshalb dürfen Grundstücks-Grenzfälle nur
-        # knapp unter der eigentlichen 1.000-m²-Grenze
-        # liegen. 900 m² ist die absolute Untergrenze
-        # für die Chancenliste.
-        if (
-            p.get("plot_area") is not None
-            and p.get("plot_area") < 900
-            and any(
-                str(reason).startswith(
-                    "Grundstück nur "
-                )
-                for reason in ko_reasons
-            )
-        ):
+        # Completed top-ranked listings already have ordinary ranking cards.
+        if p.get('score') is not None and maximum <= p['score']:
             continue
-
-
-        # Ausschließlich Preis und/oder
-        # Grundstück dürfen KO-Grund sein.
-        if not all(
-            str(reason).startswith(
-                allowed_prefixes
-            )
-            for reason in ko_reasons
-        ):
-            continue
-
-
-        potential = score_house(
-            p,
-            ignore_search_limits=True,
-        )
-
-
-        # Falls nach Aufhebung der Suchgrenzen
-        # noch ein anderes KO greift:
-        # keine Chance.
-        if potential.get("ko"):
-            continue
-
-
-        p["_potential_score"] = (
-            potential.get("score")
-        )
-
-        p["_potential_rating"] = (
-            potential.get("rating")
-        )
-
-        p["_potential_score_details"] = (
-            potential
-        )
-
-        p["_search_limit_reasons"] = (
-            ko_reasons
-        )
-
-
-        candidates.append(
-            p
-        )
-
-
-    candidates.sort(
-        key=lambda p: (
-            -conservative_score(
-                {
-                    "score": p.get(
-                        "_potential_score"
-                    ),
-                    "score_details": p.get(
-                        "_potential_score_details"
-                    ),
-                }
-            ),
-            -(
-                p.get("plot_area")
-                or 0
-            ),
-            (
-                p.get("price")
-                if p.get("price")
-                is not None
-                else float("inf")
-            ),
-        )
-    )
-
-
+        p['max_reachable_score'] = maximum
+        candidates.append(p)
+        seen.add(portal_id)
+    candidates.sort(key=lambda p: (-p['max_reachable_score'], p.get('price') or 0, str(p.get('portal_id'))))
     return candidates[:limit]
+
+
+def get_house_chance_rows(limit=3):
+    return get_chance_rows('house', limit)
+
+
+def send_chances(property_type, shown_rows):
+    rows = get_chance_rows(property_type, 3, {p['portal_id'] for p in shown_rows})
+    if not rows:
+        return
+    send_message('👀 CHANCEN · maximal erreichbar über 75/100\n'
+                 'Nur offene Kriterien werden im besten Fall angenommen. Harte KO bleiben bestehen.')
+    for number, p in enumerate(rows, 1):
+        send_message(
+            f"👀 CHANCE #{number} · Best Case: {p['max_reachable_score']}/100\n\n"
+            + format_property_card(p),
+            property_action_keyboard(p['portal_id'], p.get('property_type') or property_type, 'new'),
+        )
+
 
 CONDITION_MAP = {
     "turnkey": "Bezugsfertig",
@@ -3361,10 +3317,101 @@ def handle_message(message):
 
     text = (
         message.get("text")
+        or message.get("caption")
         or ""
     ).strip()
 
+    pending_dog_tax = PENDING_DOG_TAX.get(chat_id)
+    document = message.get("document")
+
+    if pending_dog_tax and (document or (text and not text.startswith('/'))):
+        try:
+            from dog_tax_sources import (
+                MAX_DOCUMENT_BYTES,
+                extract_document_text,
+                fetch_document,
+                telegram_upload_reference,
+            )
+            from dog_tax_wizard import (
+                accept_answer,
+                apply_automatic_results,
+                apply_document_results,
+                extract_fields,
+                next_prompt,
+            )
+            from municipality_lookup import lookup_municipality
+
+            if pending_dog_tax.get('stage') == 'source':
+                if document:
+                    if int(document.get('file_size') or 0) > MAX_DOCUMENT_BYTES:
+                        raise ValueError('Das Dokument ist größer als 12 MB.')
+                    file_info = telegram_api('getFile', {'file_id': document['file_id']})['result']
+                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info['file_path']}"
+                    with urllib.request.urlopen(file_url, timeout=30) as response:
+                        content = response.read(MAX_DOCUMENT_BYTES + 1)
+                    if len(content) > MAX_DOCUMENT_BYTES:
+                        raise ValueError('Das Dokument ist größer als 12 MB.')
+                    filename = document.get('file_name') or 'dokument.pdf'
+                    source_reference = telegram_upload_reference(content, filename)
+                    document_text = extract_document_text(content, 'application/pdf', filename)
+                elif text.startswith('https://'):
+                    source_reference, content, content_type = fetch_document(text)
+                    document_text = extract_document_text(content, content_type, source_reference)
+                else:
+                    raise ValueError('Bitte den HTTPS-Link senden oder die PDF hochladen.')
+                try:
+                    municipality = lookup_municipality(pending_dog_tax['property'])
+                except ValueError:
+                    result = apply_document_results(pending_dog_tax, source_reference, document_text)
+                else:
+                    result = apply_automatic_results(pending_dog_tax, municipality, source_reference, document_text)
+            else:
+                result = accept_answer(pending_dog_tax, text)
+
+            keyboard = dog_tax_prompt_keyboard(pending_dog_tax)
+            if pending_dog_tax.get('stage') == 'preview':
+                from dog_tax_wizard import note_existing_tariff
+                with dog_tax_database(DB_PATH) as conn:
+                    existing = load_stored_tariff(conn, pending_dog_tax['municipality_key'])
+                result = note_existing_tariff(pending_dog_tax, existing)
+            send_message(result, keyboard)
+        except Exception as exc:
+            print(f'DOG TAX INPUT ERROR: {type(exc).__name__}: {exc}', flush=True)
+            prompt = ('Bitte den HTTPS-Link senden oder die PDF hochladen.'
+                      if pending_dog_tax.get('stage') == 'source' else next_prompt(pending_dog_tax))
+            send_message(f'⚠️ {exc}\n\nDie Aufgabe bleibt geöffnet.\n\n{prompt}',
+                         dog_tax_prompt_keyboard(pending_dog_tax))
+        return
+
     if not text:
+        return
+
+    if text.partition(' ')[0].split('@')[0].lower() in ('/dogtax', '/hundesteuer'):
+        PENDING_DOG_TAX.pop(chat_id, None)
+        tasks = dog_tax_research_queue(DB_PATH, get_top_property_rows('house', 10), get_favorite_rows())
+        if not tasks:
+            send_message('✅ Für Top-10-Häuser und Merkliste sind keine Hundesteuer-Angaben offen.')
+            return
+        lines = ['🐕 Hundesteuer · offene Aufgaben', '',
+                 'Wähle ein Objekt. Danach reicht ein Satzungslink oder eine hochgeladene PDF.']
+        buttons = []
+        for number, task in enumerate(tasks, 1):
+            if task['kind'] == 'municipality':
+                p = task['property']
+                lines.append(f"{number}. 📍 {p.get('location') or 'Ort unbekannt'} · Gemeinde/Satzung offen")
+                portal_id = p['portal_id']
+            else:
+                lines.append(f"{number}. 📜 {task['municipality_name']} · Satzung offen")
+                portal_id = task['portal_id']
+            buttons.append([{'text': f'🐕 Aufgabe {number} öffnen', 'callback_data': f'dt:start:{portal_id}'}])
+        send_message('\n'.join(lines), {'inline_keyboard': buttons})
+        return
+
+    if text.partition(' ')[0].split('@')[0].lower() in ('/dogtax_link', '/dogtax_set'):
+        from dog_tax_workflow import handle_dog_tax_command
+        result = handle_dog_tax_command(text, DB_PATH, get_top_property_rows('house', 10), get_favorite_rows())
+        for start in range(0, len(result), 3800):
+            send_message(result[start:start + 3800])
         return
 
     # --------------------------------------------------------
@@ -4005,9 +4052,8 @@ def handle_message(message):
             )
 
             if locality_workflow:
-                row, total = incomplete_first_locality(
-                    DB_PATH
-                )
+                rows = LOCALITY_LAB.rows(incomplete_locality_rows(DB_PATH))
+                row, total = (rows[0] if rows else None), len(rows)
             else:
                 row, total = incomplete_first_geo(
                     DB_PATH
@@ -4079,10 +4125,13 @@ def handle_message(message):
                     }
                 )
 
-            send_message(
+            sent = send_message(
                 next_text,
                 next_keyboard,
             )
+
+            if locality_workflow:
+                LOCALITY_LAB.track((sent or {}).get('result', {}).get('message_id'), row)
 
             return
 
@@ -4334,10 +4383,14 @@ def handle_message(message):
 
         query = text.partition(" ")[2].strip()
 
+        result, keyboard = find_properties(
+            query,
+            with_keyboard=True,
+        )
+
         send_message(
-            find_properties(
-                query
-            )
+            result,
+            keyboard,
         )
 
         return
@@ -4414,6 +4467,8 @@ def handle_message(message):
                 )
             )
 
+        send_chances('land', rows)
+
         return
 
     if command == "/top3house":
@@ -4446,178 +4501,7 @@ def handle_message(message):
             )
 
 
-        # ----------------------------------------------------
-        # Chancen / Grenzfälle
-        # ----------------------------------------------------
-
-        chances = get_house_chance_rows(
-            3
-        )
-
-
-        if chances:
-
-            send_message(
-                "👀 CHANCEN / GRENZFÄLLE\n\n"
-                "Hier werden nur Preis- und knapp "
-                "verfehlte Grundstücksgrenzen "
-                "temporär ignoriert.\n"
-                "Alle anderen KO-Kriterien gelten weiter."
-            )
-
-
-            hard = (
-                CONFIG
-                .score_config()
-                .get("house", {})
-                .get("hard_filters", {})
-            )
-
-            maximum_price = hard.get(
-                "max_price"
-            )
-
-            minimum_plot = hard.get(
-                "min_plot_area"
-            )
-
-
-            for number, p in enumerate(
-                chances,
-                1
-            ):
-
-                display = dict(p)
-
-                display["score"] = (
-                    p.get(
-                        "_potential_score"
-                    )
-                )
-
-                display["rating"] = (
-                    "chance / "
-                    + str(
-                        p.get(
-                            "_potential_rating"
-                        )
-                        or "-"
-                    )
-                )
-
-                display["score_details"] = (
-                    p.get(
-                        "_potential_score_details"
-                    )
-                )
-
-
-                notes = []
-
-
-                price = p.get(
-                    "price"
-                )
-
-                if (
-                    maximum_price is not None
-                    and price is not None
-                    and price > maximum_price
-                ):
-
-                    difference = (
-                        price
-                        - maximum_price
-                    )
-
-                    percentage = (
-                        difference
-                        / price
-                        * 100
-                    )
-
-                    percentage_text = (
-                        f"{percentage:.1f}"
-                        .replace(
-                            ".",
-                            ","
-                        )
-                    )
-
-                    notes.append(
-                        "⚠️ Preis über Suchgrenze: "
-                        + f"{price:,.0f} €"
-                        .replace(
-                            ",",
-                            "."
-                        )
-                    )
-
-                    notes.append(
-                        "   → "
-                        + f"{difference:,.0f} €"
-                        .replace(
-                            ",",
-                            "."
-                        )
-                        + " bzw. "
-                        + percentage_text
-                        + " % Nachlass nötig"
-                    )
-
-
-                plot_area = p.get(
-                    "plot_area"
-                )
-
-                if (
-                    minimum_plot is not None
-                    and plot_area is not None
-                    and plot_area < minimum_plot
-                ):
-
-                    missing = (
-                        minimum_plot
-                        - plot_area
-                    )
-
-                    notes.append(
-                        "⚠️ Grundstück: "
-                        + f"{plot_area:,.0f} m²"
-                        .replace(
-                            ",",
-                            "."
-                        )
-                        + " — "
-                        + f"{missing:,.0f} m²"
-                        .replace(
-                            ",",
-                            "."
-                        )
-                        + " unter Suchgrenze"
-                    )
-
-
-                chance_text = (
-                    "👀 CHANCE "
-                    f"#{number}\n"
-                    + "\n".join(notes)
-                    + "\n\n"
-                    + format_property_card(
-                        display
-                    )
-                )
-
-
-                send_message(
-                    chance_text,
-                    property_action_keyboard(
-                        p["portal_id"],
-                        "house",
-                        "new"
-                    )
-                )
-
+        send_chances('house', rows)
 
         return
 
@@ -4724,6 +4608,8 @@ def handle_message(message):
 
     if command == "/incomplete":
 
+        LOCALITY_LAB.reset()
+
         send_message(
             incomplete_overview_text(
                 DB_PATH
@@ -4803,6 +4689,43 @@ def handle_message(message):
 
         return
 
+def dog_tax_prompt_keyboard(session):
+    rows = []
+    if session.get('stage') == 'model':
+        rows.extend([
+            [{'text': '📊 Staffel je Hund', 'callback_data': 'dt:model:staffel'}],
+            [{'text': '👥 Satz für alle Hunde', 'callback_data': 'dt:model:alle'}],
+        ])
+    elif session.get('stage') == 'preview':
+        rows.extend([
+            [{'text': '✅ Bestätigen', 'callback_data': 'dt:confirm'}],
+            [{'text': '✏️ Quelle korrigieren', 'callback_data': 'dt:correct'}],
+        ])
+    rows.append([{'text': '⏭ Für jetzt überspringen', 'callback_data': 'dt:skip'}])
+    rows.append([{'text': '✖ Abbrechen', 'callback_data': 'dt:cancel'}])
+    return {'inline_keyboard': rows}
+
+
+def _edit_callback_message(callback, text, keyboard=None):
+    message = callback.get('message', {})
+    data = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'message_id': message['message_id'],
+        'text': text,
+        'disable_web_page_preview': 'true',
+    }
+    if keyboard is not None:
+        data['reply_markup'] = json.dumps(keyboard)
+    telegram_api('editMessageText', data)
+
+
+def _ack_callback(callback):
+    try:
+        telegram_api('answerCallbackQuery', {'callback_query_id': callback['id']})
+    except Exception as exc:
+        print(f'DOG TAX CALLBACK ACK ERROR: {exc}', flush=True)
+
+
 def handle_callback(callback):
 
     message = callback.get(
@@ -4829,6 +4752,82 @@ def handle_callback(callback):
         or ""
     )
 
+    if data.startswith('dt:'):
+        _ack_callback(callback)
+        action = data.split(':', 2)
+
+        if len(action) == 3 and action[1] == 'start':
+            portal_id = action[2]
+            property_data = get_property_data(portal_id)
+            if not property_data or not is_house_type(property_data.get('property_type')):
+                _edit_callback_message(callback, '❌ Haus nicht gefunden.')
+                return
+            from dog_tax_wizard import new_session
+            session = new_session(property_data, property_data.get('property_type') or 'house', 'new')
+            PENDING_DOG_TAX[chat_id] = session
+            _edit_callback_message(
+                callback,
+                f"🐕 Hundesteuer für\n{property_data.get('title') or portal_id}\n"
+                f"📍 {property_data.get('location') or 'Ort unbekannt'}\n\n"
+                "Bitte jetzt den Link zur Hundesteuersatzung senden oder die PDF hochladen.\n\n"
+                "Ich ordne das Objekt der Gemeinde zu, lese die Sätze und zeige vor dem Speichern eine Vorschau.",
+                dog_tax_prompt_keyboard(session),
+            )
+            return
+
+        session = PENDING_DOG_TAX.get(chat_id)
+        if not session:
+            _edit_callback_message(callback, 'ℹ️ Diese Hundesteuer-Aufgabe ist nicht mehr aktiv. Bitte /hundesteuer neu öffnen.')
+            return
+
+        if len(action) == 3 and action[1] == 'model':
+            from dog_tax_wizard import choose_model, note_existing_tariff
+            try:
+                result = choose_model(session, action[2])
+                if session.get('stage') == 'preview':
+                    with dog_tax_database(DB_PATH) as conn:
+                        existing = load_stored_tariff(conn, session['municipality_key'])
+                    result = note_existing_tariff(session, existing)
+            except ValueError as exc:
+                result = f'⚠️ {exc}'
+            _edit_callback_message(callback, result, dog_tax_prompt_keyboard(session))
+            return
+
+        command = action[1]
+        if command in ('skip', 'cancel'):
+            PENDING_DOG_TAX.pop(chat_id, None)
+            label = '⏭ Für jetzt übersprungen.' if command == 'skip' else '✖ Hundesteuer-Eingabe abgebrochen.'
+            _edit_callback_message(callback, label + '\n\n' + get_property(session['property']['portal_id']),
+                                   property_details_keyboard(session['property']['portal_id'], session['property_type'], session['number']))
+            return
+
+        if command == 'correct':
+            for field in ('source_reference', 'valid_from', 'model', 'rates', 'source_version',
+                          'citation', 'document_municipality', 'document_warning'):
+                session.pop(field, None)
+            session['stage'] = 'source'
+            _edit_callback_message(callback, '✏️ Bitte einen anderen Satzungslink senden oder eine andere PDF hochladen.',
+                                   dog_tax_prompt_keyboard(session))
+            return
+
+        if command == 'confirm':
+            if session.get('stage') != 'preview':
+                _edit_callback_message(callback, '⚠️ Die Angaben sind noch nicht vollständig.', dog_tax_prompt_keyboard(session))
+                return
+            from dog_tax_wizard import tariff_from_session
+            try:
+                tariff = tariff_from_session(session)
+                save_assignment_and_tariff(DB_PATH, session['property'], tariff, session['municipality_source'])
+            except Exception as exc:
+                _edit_callback_message(callback, f'⚠️ Speichern fehlgeschlagen: {exc}', dog_tax_prompt_keyboard(session))
+                return
+            PENDING_DOG_TAX.pop(chat_id, None)
+            _edit_callback_message(callback, '✅ Hundesteuer gespeichert.\n\n' + get_property(session['property']['portal_id']),
+                                   property_details_keyboard(session['property']['portal_id'], session['property_type'], session['number']))
+            return
+
+        return
+
     # --------------------------------------------------------
     # Incomplete workbench
     # --------------------------------------------------------
@@ -4840,6 +4839,8 @@ def handle_callback(callback):
         "iw:geo",
         "iw:locality",
     ):
+
+        LOCALITY_LAB.reset()
 
         try:
 
@@ -4950,9 +4951,13 @@ def handle_callback(callback):
 
         elif data == "iw:locality":
 
+            SKIPPED_LOCALITY_LAB.clear()
+
             row, total = incomplete_first_locality(
                 DB_PATH
             )
+
+            LOCALITY_LAB.track(message.get('message_id'), row)
 
             if row is None:
 
@@ -5618,6 +5623,107 @@ def handle_callback(callback):
 
         return
 
+    if data.startswith("iwl_skip:"):
+
+        try:
+            (
+                _,
+                portal_id,
+            ) = data.split(
+                ":",
+                1,
+            )
+
+        except ValueError:
+            return
+
+        try:
+
+            telegram_api(
+                "answerCallbackQuery",
+                {
+                    "callback_query_id":
+                        callback["id"],
+                }
+            )
+
+        except Exception as exc:
+
+            print(
+                "LOCALITY SKIP ACK ERROR: "
+                f"{exc}",
+                flush=True,
+            )
+
+        SKIPPED_LOCALITY_LAB.add(
+            str(portal_id)
+        )
+
+        rows = [
+            row
+            for row in incomplete_locality_rows(
+                DB_PATH
+            )
+            if str(
+                row.get("portal_id")
+                or ""
+            ) not in SKIPPED_LOCALITY_LAB
+        ]
+
+        row = rows[0] if rows else None
+
+        if not rows:
+
+            text = (
+                "⏭ Lage übersprungen.\n\n"
+                "✅ Keine weiteren Lagen "
+                "in diesem Durchgang.\n\n"
+                + incomplete_overview_text(
+                    DB_PATH
+                )
+            )
+
+            keyboard = incomplete_overview_keyboard(
+                DB_PATH
+            )
+
+        else:
+
+            row = rows[0]
+
+            text = (
+                "⏭ Lage übersprungen.\n\n"
+                + incomplete_locality_text(
+                    row,
+                    1,
+                    len(rows),
+                )
+            )
+
+            keyboard = incomplete_locality_keyboard(
+                row
+            )
+
+        telegram_api(
+            "editMessageText",
+            {
+                "chat_id":
+                    TELEGRAM_CHAT_ID,
+                "message_id":
+                    message["message_id"],
+                "text":
+                    text,
+                "disable_web_page_preview":
+                    "true",
+                "reply_markup":
+                    json.dumps(
+                        keyboard
+                    ),
+            }
+        )
+
+        LOCALITY_LAB.track(message['message_id'], row)
+        return
 
     # --------------------------------------------------------
     # Coordinates
@@ -5808,6 +5914,19 @@ def handle_callback(callback):
         )
         return
 
+
+    if data.startswith("geo_rescan:"):
+        try:
+            _, portal_id, property_type, number = data.split(":", 3)
+        except ValueError:
+            return
+        try:
+            telegram_api("answerCallbackQuery", {"callback_query_id": callback["id"]})
+        except Exception as exc:
+            print(f"CALLBACK ACK ERROR: {exc}", flush=True)
+        send_message("🔄 Wasser, Nachbarn und Lärm/Bahn werden neu geprüft …")
+        send_message(rescan_geo(portal_id), property_details_keyboard(portal_id, property_type, number))
+        return
 
     if data.startswith("coords_auto:"):
 
@@ -6698,6 +6817,7 @@ def main():
                 if (
                     ACTIVE_ENERGY_LAB
                     or ACTIVE_CONDITION_LAB
+                    or LOCALITY_LAB.session
                 )
                 else 30
             )
@@ -6751,6 +6871,7 @@ def main():
 
             refresh_active_energy_lab()
             refresh_active_condition_lab()
+            refresh_active_locality_lab()
 
         except Exception as exc:
 

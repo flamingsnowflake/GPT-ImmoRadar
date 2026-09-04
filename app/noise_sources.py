@@ -331,22 +331,16 @@ def get_air_noise(lat, lon):
 
 
 def get_noise(lat, lon):
-    return {
-        "lat": float(lat),
-        "lon": float(lon),
-        "rail": get_rail_noise(
-            lat,
-            lon,
-        ),
-        "road": get_road_noise(
-            lat,
-            lon,
-        ),
-        "air": get_air_noise(
-            lat,
-            lon,
-        ),
-    }
+    result = {'lat': float(lat), 'lon': float(lon)}
+    errors = []
+    for name, lookup in [('rail', get_rail_noise), ('road', get_road_noise), ('air', get_air_noise)]:
+        try:
+            result[name] = lookup(lat, lon)
+        except Exception as exc:
+            errors.append(f'{name}: {type(exc).__name__}: {exc}')
+    if errors:
+        raise RuntimeError('; '.join(errors))
+    return result
 
 
 def _display_band(

@@ -1,5 +1,36 @@
 # Operations
 
+## Browser-enrichment token rotation
+
+### Applying a scoring update
+
+Preview existing records with `python app/rescore_current.py --db PATH --config-dir config`.
+This performs no network requests and writes no database rows. To apply the result,
+add `--apply --backup NEW_BACKUP_PATH`; an existing backup path is rejected.
+The command preserves blacklisted/deleted/offline/uninterested listings and updates
+scores in one transaction. Restart all score-producing processes after shared scoring
+changes, using the service matrix below. Test Telegram Top-3, details and lab callbacks
+after restart. `/dogtax` describes the half-automatic municipal tax workflow.
+
+Run isolated tests from the repository root with `python -m pytest -q app`.
+Install `pytest` alongside `requirements.txt` in a separate test environment.
+The three legacy live-check scripts are excluded from collection because they
+require external mail/geo services or a command-line mail fixture.
+
+`config/browser_enrich_token` is the only token source. The server reads it on
+every request. `BROWSER_ENRICH_TOKEN` in `.env` or the process environment has no
+effect and must be removed. This token is separate from the Energy API token.
+
+To rotate, write a newly generated random token to a temporary file in `config/`,
+give it the same owner/group and restrictive permissions as the current token,
+then atomically rename it to `browser_enrich_token`. Update the userscript's token
+to the same value. No Compose recreation or service restart is required.
+
+If the userscript receives `403 invalid token`, compare its configured token with
+the canonical file, not `.env`. Do not put token values in logs, issues, screenshots,
+or shell arguments/history. A missing/unreadable token file is a server configuration
+error, not a reason to fall back to another source.
+
 ## Reference project root
 
 ```text

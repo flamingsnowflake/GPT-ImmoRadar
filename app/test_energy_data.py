@@ -85,7 +85,7 @@ class EnergyDataTest(unittest.TestCase):
         )
 
     def test_update_property_energy(self):
-        with tempfile.NamedTemporaryFile() as tmp:
+        with tempfile.NamedTemporaryFile(delete_on_close=False) as tmp:
             conn = sqlite3.connect(tmp.name)
             conn.row_factory = sqlite3.Row
 

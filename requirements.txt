@@ -2,3 +2,4 @@ PyYAML==6.0.2
 pyproj
 shapely
 Telethon==1.44.0
+pypdf==6.16.2

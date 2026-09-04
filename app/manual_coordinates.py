@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from monitor import DB_PATH, enrich_property
 from property_types import is_house_type
 from scoring import score_house, score_land
+from geo_report import geo_report_lines
 from geo_precision import (
     GEO_PRECISION_EXACT,
     location_has_exact_address,
@@ -15,42 +16,7 @@ from geo_precision import (
 )
 
 
-def parse_coordinates(value):
-
-    if not value:
-        return None
-
-    numbers = re.findall(
-        r"[-+]?\d+(?:[.,]\d+)?",
-        str(value),
-    )
-
-    if len(numbers) != 2:
-        return None
-
-    try:
-
-        latitude = float(
-            numbers[0].replace(",", ".")
-        )
-
-        longitude = float(
-            numbers[1].replace(",", ".")
-        )
-
-    except ValueError:
-        return None
-
-    if not (
-        -90.0 <= latitude <= 90.0
-        and -180.0 <= longitude <= 180.0
-    ):
-        return None
-
-    return (
-        latitude,
-        longitude,
-    )
+from coordinate_parser import parse_coordinates
 
 
 def geocode_manual_address(value):
@@ -167,6 +133,10 @@ def resolve_manual_location(value):
     if not location_has_exact_address(
         value
     ):
+        return None
+
+    if re.search(r'[°º]', value):
+        # Malformed DMS is a coordinate error, not an address search.
         return None
 
     geocoded = geocode_manual_address(
@@ -395,7 +365,8 @@ def _coordinate_reset_sql():
         air_lnight = NULL,
         air_noise_source = NULL,
 
-        noise_checked_at = NULL
+        noise_checked_at = NULL,
+        score = NULL, rating = 'incomplete', is_ko = 0, score_details = NULL
     """
 
 
@@ -453,6 +424,8 @@ def _recalculate_after_coordinate_change(
         score_result = None
 
     if score_result is not None:
+
+        score_result["geo_errors"] = property_data.get("_geo_errors", {})
 
         property_data["score"] = (
             score_result["score"]
@@ -651,52 +624,7 @@ def set_manual_coordinates(
         f"{longitude:.6f}",
     ]
 
-    geo_checks = (
-        (
-            "Wasser",
-            p.get("water_score") is not None,
-        ),
-        (
-            "Nachbarn",
-            p.get("neighbour_checked_at") is not None,
-        ),
-        (
-            "Lärm",
-            p.get("noise_checked_at") is not None,
-        ),
-    )
-
-    completed_checks = [
-        label
-        for label, completed in geo_checks
-        if completed
-    ]
-
-    pending_checks = [
-        label
-        for label, completed in geo_checks
-        if not completed
-    ]
-
-    if completed_checks:
-        lines.extend(
-            [
-                "",
-                "Neu berechnet: "
-                + ", ".join(completed_checks)
-                + ".",
-            ]
-        )
-
-    if pending_checks:
-        lines.extend(
-            [
-                "",
-                "Noch technisch offen: "
-                + ", ".join(pending_checks)
-                + ".",
-            ]
-        )
+    lines.extend(geo_report_lines(p))
 
     if p.get("score") is not None:
 
@@ -821,10 +749,7 @@ def clear_manual_coordinates(
     lines.append("")
 
     if p.get("geo_precision") == "exact":
-        lines.append(
-            "Wasser, Nachbarn und Lärm "
-            "wurden neu berechnet."
-        )
+        lines.extend(geo_report_lines(p))
     elif p.get("geo_precision") == "locality":
         lines.append(
             "📍 Lage nur auf Ortsebene bekannt; "
@@ -864,3 +789,30 @@ def clear_manual_coordinates(
             )
 
     return "\n".join(lines)
+
+
+def rescan_geo(portal_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute('SELECT * FROM properties WHERE portal_id = ? ORDER BY last_seen DESC LIMIT 1', (portal_id,)).fetchone()
+        if row is None:
+            return f'❌ Objekt {portal_id} nicht gefunden.'
+        if row['rating'] == 'blacklisted':
+            return '🚫 Blacklisted: kein Geo-Re-Scan.'
+        if row['latitude'] is None or row['longitude'] is None or row['geo_precision'] != 'exact':
+            return '📍 Bitte zuerst genaue Koordinaten setzen.'
+        conn.execute(f'UPDATE properties SET {_coordinate_reset_sql()} WHERE id = ?', (row['id'],))
+        conn.commit()
+        try:
+            p = _recalculate_after_coordinate_change(conn, row['id'])
+        except Exception as exc:
+            return f'⚠️ Geo-Re-Scan fehlgeschlagen; alte Geo-Werte und Score verworfen. {type(exc).__name__}: {exc}'
+        lines = ['🔄 Geo-Re-Scan', row['title'] or portal_id, ''] + geo_report_lines(p)
+        if p.get('score') is not None:
+            lines.append(f"Score: {p['score']}/100 · {p.get('rating')}")
+        else:
+            lines.append('⏳ Noch kein Gesamtscore; offene Prüfungen bleiben sichtbar.')
+        return '\n'.join(lines)
+    finally:
+        conn.close()

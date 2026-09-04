@@ -80,7 +80,7 @@ class EnergyConsistencyFixTests(unittest.TestCase):
     def test_user_status_ensure_runs_once_per_process(self):
 
         with tempfile.NamedTemporaryFile(
-            suffix=".sqlite3"
+            suffix=".sqlite3", delete_on_close=False
         ) as handle:
 
             conn = sqlite3.connect(

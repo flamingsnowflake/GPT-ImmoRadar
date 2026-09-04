@@ -50,7 +50,10 @@ print(secrets.token_urlsafe(48))
 PY
 ```
 
-The token file is ignored by Git.
+The token file is ignored by Git and is the only canonical source. Do not add
+`BROWSER_ENRICH_TOKEN` to `.env`: the browser service does not use that variable.
+It re-reads the file on every request, so rotation needs no restart. Configure
+the same token in the userscript. See `docs/operations.md` for rotation.
 
 ## Docker services
 

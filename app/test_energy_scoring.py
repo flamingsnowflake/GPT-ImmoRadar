@@ -80,7 +80,7 @@ class EnergyScoringTest(unittest.TestCase):
         self.assertIn("H", reason)
         self.assertIn("Bedarf", reason)
 
-    def test_not_required_is_neutral(self):
+    def test_not_required_keeps_uncertainty_penalty(self):
         adjustment, reason = (
             energy_score_adjustment(
                 {
@@ -90,13 +90,13 @@ class EnergyScoringTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(adjustment, 0)
+        self.assertEqual(adjustment, -7)
         self.assertEqual(
             reason,
-            "Ausweis nicht erforderlich",
+            "Ausweis nicht erforderlich | Risiko -7",
         )
 
-    def test_unknown_is_neutral(self):
+    def test_unknown_keeps_uncertainty_penalty(self):
         adjustment, reason = (
             energy_score_adjustment(
                 {},
@@ -104,8 +104,8 @@ class EnergyScoringTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(adjustment, 0)
-        self.assertEqual(reason, "unbekannt")
+        self.assertEqual(adjustment, -7)
+        self.assertEqual(reason, "Energie unbekannt | Risiko -7")
 
     def test_inconsistent_data_uses_worse_class(self):
         adjustment, reason = (

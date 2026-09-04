@@ -43,11 +43,11 @@ Per-property user status (`active`, `offline`, `not_interested`) is separate fro
 The reference house/farm hard filters include:
 
 ```text
-real purchase price <= 300,000 EUR
-plot area >= 500 m²
+purchase price + known necessary condition costs <= house.hard_filters.max_price
+plot area >= house.hard_filters.min_plot_area
 ```
 
-The price KO uses the **real advertised purchase price**. Condition surcharges and the Ohne-Makler scoring effect do not change that hard-filter value.
+The hard budget uses the **advertised purchase price plus the configured necessary condition surcharge**. The limit is `house.hard_filters.max_price`. It also applies to chances; the Ohne-Makler scoring discount cannot bypass it. An unknown condition's estimated surcharge does not trigger a KO: the property remains incomplete pending review. A purchase price alone above the limit is still a KO.
 
 The normal 100-point house base is currently:
 
@@ -97,7 +97,7 @@ The current effective-price brackets are:
 >  350,000  -40
 ```
 
-This is why a cheap ruin can rank below a more expensive house in good condition: the ranking price is purchase price plus the configured condition surcharge, while the hard budget still looks only at the real purchase price.
+Both ranking and the hard budget include the configured condition surcharge once the condition is known. For example, 295,000 EUR plus 15,000 EUR is a budget KO at a 300,000 EUR limit, even if the other score components are good.
 
 ### Plot
 
@@ -240,6 +240,14 @@ Numeric fallback boundaries are:
 ```
 
 ## Ohne-Makler effect
+
+### Best-case chances
+
+The extra chances below both Top-3 lists require `max_reachable_score > 75`;
+exactly 75 is excluded. Only unresolved components receive their possible maximum.
+Known poor water/neighbour/energy/noise values stay unchanged. The regular scorer
+calculates the result, including bonuses and hard KOs; assumptions are never saved
+as property facts. Listings already displayed in the Top-3 are not repeated.
 
 Recognized broker-free offers receive a transaction-cost scoring advantage:
 

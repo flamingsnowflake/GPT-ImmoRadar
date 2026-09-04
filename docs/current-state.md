@@ -135,7 +135,7 @@ dilapidated        +220,000 EUR
 unknown            +100,000 EUR
 ```
 
-The hard house price filter still uses the real purchase price; condition surcharges affect ranking, not the real budget KO.
+The hard house budget uses purchase price plus known condition surcharges. Unknown condition estimates remain open until review, unless the purchase price alone already exceeds the budget. Bonuses and the chances list cannot bypass that limit.
 
 ## Energy semantics
 

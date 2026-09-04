@@ -336,6 +336,9 @@ def purge_property(
         )
     )
 
+    if _table_exists(conn, 'dog_tax_assignments'):
+        conn.execute('DELETE FROM dog_tax_assignments WHERE portal = ? AND portal_id = ?', (portal, portal_id))
+
     record_terminal_event(
         conn,
         portal,

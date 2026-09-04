@@ -270,6 +270,25 @@ For rail, “no EBA isophone at the property” is not automatically equivalent 
 
 ## 11. Runtime / restart boundaries
 
+### Full geo re-scan
+
+Setting coordinates and the detail button `🔄 Geo neu berechnen` use the same
+enrichment and scoring pipeline. Old water, building, noise/rail data and the old
+score are cleared before requests start. Module failures do not skip subsequent
+modules. Telegram reports each module's success or error; failures are also stored
+in `score_details.geo_errors`. A failed lookup remains unknown, never zero.
+
+Water/building coverage currently supports Sachsen-Anhalt and Niedersachsen.
+Mecklenburg-Vorpommern (including Lübesse) is explicitly reported as unsupported;
+repeating a scan cannot manufacture missing coverage. Noise uses separate sources.
+
+The active locality card advances automatically when its listing is blacklisted,
+deleted, or receives exact coordinates through browser enrichment. A skipped
+listing is hidden only for the current pass; reopening the lab restores it.
+Manual coordinates accept decimal degrees and DMS, for example
+`51°33'43.6"N 11°33'19.5"E`. South and west produce negative coordinates.
+Invalid degrees, minutes, seconds, or hemisphere pairs are rejected.
+
 The workflows span multiple long-running processes. Editing a bind-mounted Python file does not reload already imported modules.
 
 Use the restart matrix in `docs/operations.md`. In particular:

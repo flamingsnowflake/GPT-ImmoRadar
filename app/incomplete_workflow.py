@@ -1013,7 +1013,6 @@ def locality_text(row, position, total):
 
     return "\n".join(lines)
 
-
 def locality_keyboard(row):
 
     portal_id = str(
@@ -1039,13 +1038,20 @@ def locality_keyboard(row):
             ],
             [
                 {
+                    "text": "⏭ Überspringen",
+                    "callback_data": (
+                        f"iwl_skip:{portal_id}"
+                    ),
+                }
+            ],
+            [
+                {
                     "text": "⬅️ Labor",
                     "callback_data": "iw:menu",
                 }
             ],
         ]
     }
-
 
 def first_condition(db_path):
 

@@ -1,4 +1,5 @@
 from config_loader import CONFIG
+from house_budget import house_costs
 from geo_precision import (
     GEO_INCOMPLETE_REASONS,
     GEO_PRECISION_LOCALITY,
@@ -1129,6 +1130,9 @@ def score_land(property_data):
             "Lärm"
         )
 
+    if 'Lärm' in incomplete_reasons and _rail_fallback_penalty(property_data, 'land') is not None:
+        incomplete_reasons.remove('Lärm')
+
     if incomplete_reasons:
 
         return {
@@ -1828,32 +1832,15 @@ def score_house(property_data, ignore_search_limits=False):
     #
     # WICHTIG:
     #
-    # Der Preis-KO verwendet ausschließlich den REALEN
-    # Kaufpreis.
-    #
-    # Der Zustandsaufschlag wird nur bei der anschließenden
-    # Bewertung verwendet.
+    # Das harte Budget umfasst Kaufpreis und bekannte Zustandskosten.
+    # Eine unbekannte Zustandsschätzung löst kein Budget-KO aus.
     #
     # Fehlende Werte sind NICHT automatisch KO.
     # ========================================================
 
-    maximum_price = hard.get(
-        "max_price"
-    )
-
-    if (
-        not ignore_search_limits
-        and maximum_price is not None
-        and price is not None
-        and price > maximum_price
-    ):
-
-        ko_reasons.append(
-            "Kaufpreis "
-            + f"{price:,.0f} €".replace(",", ".")
-            + " > "
-            + f"{maximum_price:,.0f} €".replace(",", ".")
-        )
+    costs = house_costs(price, condition_class, config)
+    if costs['ko_reason']:
+        ko_reasons.append(costs['ko_reason'])
 
 
     minimum_plot = hard.get(
@@ -1917,17 +1904,7 @@ def score_house(property_data, ignore_search_limits=False):
         {},
     )
 
-    condition_surcharge = (
-        price_config
-        .get(
-            "condition_surcharge",
-            {},
-        )
-        .get(
-            condition_class,
-            100000,
-        )
-    )
+    condition_surcharge = costs['surcharge']
 
     effective_price = None
 

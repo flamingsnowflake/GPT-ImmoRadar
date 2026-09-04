@@ -3,13 +3,13 @@
 Generated from private production commit:
 
 ```text
-c7f2ea7b1a4bde43da673cd46122a65886e62427
+787b13dc67c97626a512425f0843e914921b780c
 ```
 
 Generated at:
 
 ```text
-2026-09-02T10:12:09.338172+00:00
+2026-09-04T08:53:28.092120+00:00
 ```
 
 This directory intentionally contains **no Git history** from the private production repository.
