@@ -45,6 +45,8 @@ class GeoPrecisionTest(unittest.TestCase):
             "energy_updated_at": "checked",
             "energy_certificate_status": "available",
             "energy_class": "D",
+            "latitude": 51.7440632,
+            "longitude": 11.6862024,
         }
 
     def test_manual_coordinates_are_exact(self):

@@ -194,6 +194,59 @@ class GeoTelegramTest(unittest.TestCase):
             ],
         )
 
+    def test_top_list_can_rank_by_base_score_without_ploetzkau(self):
+
+        conn = sqlite3.connect(self.temp.name)
+        conn.execute(
+            "UPDATE properties SET property_type = 'house', "
+            "score = 90, score_details = ? "
+            "WHERE portal_id = 'exact-70'",
+            (
+                json.dumps(
+                    {
+                        "score": 90,
+                        "base_score": 60,
+                        "location_weighting_applied": True,
+                    }
+                ),
+            ),
+        )
+        conn.execute(
+            "UPDATE properties SET property_type = 'house', "
+            "score = 60, score_details = ? "
+            "WHERE portal_id = 'exact-60'",
+            (
+                json.dumps(
+                    {
+                        "score": 60,
+                        "base_score": 95,
+                        "location_weighting_applied": True,
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        weighted = telegram_commands.get_top_property_rows(
+            "house",
+            3,
+        )
+        base = telegram_commands.get_top_property_rows(
+            "house",
+            3,
+            ranking="base",
+        )
+
+        self.assertEqual(
+            weighted[0]["portal_id"],
+            "exact-70",
+        )
+        self.assertEqual(
+            base[0]["portal_id"],
+            "exact-60",
+        )
+
     def test_card_labels_provisional_range(self):
 
         card = telegram_commands.format_property_card(
@@ -218,6 +271,66 @@ class GeoTelegramTest(unittest.TestCase):
             "⭐ 52–87 Punkte | "
             "📍 Lage nur auf Ortsebene bekannt",
             card,
+        )
+
+    def test_card_shows_base_and_weighted_score_separately(self):
+
+        card = telegram_commands.format_property_card(
+            {
+                "portal_id": "weighted",
+                "property_type": "house",
+                "title": "Weighted",
+                "location": "Musterweg 1",
+                "score": 59,
+                "rating": "archive",
+                "score_details": json.dumps(
+                    {
+                        "score": 59,
+                        "base_score": 84,
+                        "location_weighting_applied": True,
+                        "location_reference": "Plötzkau",
+                    }
+                ),
+            }
+        )
+
+        base_line = (
+            "⭐ Gesamtscore ohne Plötzkau: 84/100"
+        )
+        weighted_line = (
+            "📍 Gewichteter Plötzkau-Score: 59/100"
+        )
+
+        self.assertIn(base_line, card)
+        self.assertIn(weighted_line, card)
+        self.assertLess(
+            card.index(base_line),
+            card.index(weighted_line),
+        )
+
+        weighted_card = telegram_commands.format_property_card(
+            {
+                "portal_id": "weighted",
+                "property_type": "house",
+                "title": "Weighted",
+                "location": "Musterweg 1",
+                "score": 59,
+                "rating": "archive",
+                "score_details": json.dumps(
+                    {
+                        "score": 59,
+                        "base_score": 84,
+                        "location_weighting_applied": True,
+                        "location_reference": "Plötzkau",
+                    }
+                ),
+            },
+            weighted_first=True,
+        )
+
+        self.assertLess(
+            weighted_card.index(weighted_line),
+            weighted_card.index(base_line),
         )
 
 

@@ -14,6 +14,9 @@ from geo_precision import (
     location_has_exact_address,
     provisional_score_range,
 )
+from score_display import (
+    completed_score_lines,
+)
 
 
 from coordinate_parser import parse_coordinates
@@ -347,6 +350,7 @@ def _coordinate_reset_sql():
 
         neighbour_class = NULL,
         nearest_building_m = NULL,
+        buildings_50m = NULL,
         buildings_100m = NULL,
         buildings_250m = NULL,
         buildings_500m = NULL,
@@ -457,6 +461,7 @@ def _recalculate_after_coordinate_change(
         "water_score": property_data.get("water_score"),
         "neighbour_class": property_data.get("neighbour_class"),
         "nearest_building_m": property_data.get("nearest_building_m"),
+        "buildings_50m": property_data.get("buildings_50m"),
         "buildings_100m": property_data.get("buildings_100m"),
         "buildings_250m": property_data.get("buildings_250m"),
         "buildings_500m": property_data.get("buildings_500m"),
@@ -628,8 +633,8 @@ def set_manual_coordinates(
 
     if p.get("score") is not None:
 
-        lines.append(
-            f"Score: {p['score']}/100"
+        lines.extend(
+            completed_score_lines(p)
         )
 
         lines.append(
@@ -764,8 +769,8 @@ def clear_manual_coordinates(
 
     if p.get("score") is not None:
 
-        lines.append(
-            f"Score: {p['score']}/100"
+        lines.extend(
+            completed_score_lines(p)
         )
 
         lines.append(
@@ -810,7 +815,8 @@ def rescan_geo(portal_id):
             return f'⚠️ Geo-Re-Scan fehlgeschlagen; alte Geo-Werte und Score verworfen. {type(exc).__name__}: {exc}'
         lines = ['🔄 Geo-Re-Scan', row['title'] or portal_id, ''] + geo_report_lines(p)
         if p.get('score') is not None:
-            lines.append(f"Score: {p['score']}/100 · {p.get('rating')}")
+            lines.extend(completed_score_lines(p))
+            lines.append(f"Status: {p.get('rating')}")
         else:
             lines.append('⏳ Noch kein Gesamtscore; offene Prüfungen bleiben sichtbar.')
         return '\n'.join(lines)

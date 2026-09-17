@@ -15,6 +15,57 @@ telegram.ensure_user_status_table = user_status.ensure_user_status_table
 
 
 class LocalChangesTests(unittest.TestCase):
+    def test_help_is_complete_and_fits_one_telegram_message(self):
+        commands = (
+            '/help',
+            '/start',
+            '/find',
+            '/search',
+            '/property',
+            '/inspect',
+            '/merkliste',
+            '/favorites',
+            '/top3house',
+            '/top10house',
+            '/top3house_ohne',
+            '/top10house_ohne',
+            '/top3land',
+            '/incomplete',
+            '/coords',
+            '/coords-auto',
+            '/condition',
+            '/buildability',
+            '/hundesteuer',
+            '/dogtax',
+            '/dogtax_link',
+            '/dogtax_set',
+            '/blacklist',
+            '/purge',
+        )
+
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn(command, telegram.HELP_TEXT)
+
+        self.assertLessEqual(
+            len(telegram.HELP_TEXT),
+            4096,
+        )
+
+    def test_help_command_sends_canonical_help_text(self):
+        message = {
+            'chat': {'id': 'test'},
+            'text': '/help',
+        }
+
+        with patch.object(telegram, 'TELEGRAM_CHAT_ID', 'test'), \
+             patch.object(telegram, 'send_message') as send:
+            telegram.handle_message(message)
+
+        send.assert_called_once_with(
+            telegram.HELP_TEXT,
+        )
+
     def test_unlet_house_is_not_blacklisted(self):
         with patch.object(monitor.CONFIG, 'blacklist_terms', return_value=['vermietet']):
             for text in ['Aktuelle Nutzung: Nicht vermietet', 'NICHT   VERMIETET']:
@@ -53,6 +104,136 @@ class LocalChangesTests(unittest.TestCase):
              patch.object(telegram, 'incomplete_overview_keyboard', return_value={}):
             telegram.handle_callback(callback)
         self.assertEqual(telegram.SKIPPED_LOCALITY_LAB, set())
+
+    def test_condition_no_interest_saves_and_advances(self):
+        callback = {
+            'id': 'callback',
+            'data': 'iw_nope:ca:house-1',
+            'message': {
+                'message_id': 123,
+                'chat': {'id': 'test'},
+            },
+        }
+        with patch.object(telegram, 'TELEGRAM_CHAT_ID', 'test'), \
+             patch.object(telegram, 'telegram_api'), \
+             patch.object(telegram, 'set_user_status') as save, \
+             patch.object(telegram, 'clear_information_requested') as clear, \
+             patch.object(telegram, '_render_lab_queue') as render:
+            telegram.handle_callback(callback)
+
+        save.assert_called_once_with(
+            telegram.DB_PATH,
+            'house-1',
+            'not_interested',
+        )
+        clear.assert_called_once_with(
+            telegram.DB_PATH,
+            'house-1',
+        )
+        render.assert_called_once_with(
+            callback['message'],
+            'condition',
+            False,
+            '🙈 Kein Interesse gespeichert.\n\n',
+        )
+
+    def test_locality_information_requested_saves_and_advances(self):
+        callback = {
+            'id': 'callback',
+            'data': 'iwq:add:l:house-2',
+            'message': {
+                'message_id': 123,
+                'chat': {'id': 'test'},
+            },
+        }
+        with patch.object(telegram, 'TELEGRAM_CHAT_ID', 'test'), \
+             patch.object(telegram, 'telegram_api'), \
+             patch.object(telegram, 'mark_information_requested') as save, \
+             patch.object(telegram, '_render_lab_queue') as render:
+            telegram.handle_callback(callback)
+
+        save.assert_called_once_with(
+            telegram.DB_PATH,
+            'house-2',
+            'locality',
+        )
+        render.assert_called_once_with(
+            callback['message'],
+            'locality',
+            False,
+            '📩 Information angefragt.\n\n',
+        )
+
+    def test_chance_card_uses_location_waitlist_keyboard(self):
+        chance = {
+            'portal_id': 'house-3',
+            'property_type': 'house',
+            'max_reachable_score': 88,
+        }
+
+        with patch.object(telegram, 'get_chance_rows', return_value=[chance]), \
+             patch.object(telegram, 'format_property_card', return_value='card'), \
+             patch.object(telegram, 'property_action_keyboard', return_value={}) as keyboard, \
+             patch.object(telegram, 'send_message'):
+            telegram.send_chances('house', [])
+
+        keyboard.assert_called_once_with(
+            'house-3',
+            'house',
+            'chance',
+        )
+
+    def test_chance_location_requested_saves_without_replacing_card(self):
+        callback = {
+            'id': 'callback',
+            'data': 'cwl:a:house-3:house',
+            'message': {
+                'message_id': 123,
+                'chat': {'id': 'test'},
+            },
+        }
+        keyboard_value = {'inline_keyboard': []}
+
+        with patch.object(telegram, 'TELEGRAM_CHAT_ID', 'test'), \
+             patch.object(telegram, 'telegram_api') as api, \
+             patch.object(telegram, 'mark_information_requested') as save, \
+             patch.object(telegram, 'property_action_keyboard', return_value=keyboard_value):
+            telegram.handle_callback(callback)
+
+        save.assert_called_once_with(
+            telegram.DB_PATH,
+            'house-3',
+            'locality',
+        )
+        self.assertTrue(
+            any(
+                call.args[0] == 'editMessageReplyMarkup'
+                for call in api.call_args_list
+            )
+        )
+
+    def test_chance_keyboard_shows_requested_location_state(self):
+        with patch.object(telegram, 'is_favorite', return_value=False), \
+             patch.object(telegram, 'get_user_status', return_value='active'), \
+             patch.object(telegram, 'waiting_portal_ids', return_value={'house-3'}):
+            keyboard = telegram.property_action_keyboard(
+                'house-3',
+                'house',
+                'chance',
+            )
+
+        buttons = [
+            button
+            for row in keyboard['inline_keyboard']
+            for button in row
+        ]
+        self.assertIn(
+            {
+                'text': '↩️ Lage wieder offen',
+                'callback_data': 'cwl:o:house-3:house',
+            },
+            buttons,
+        )
 
 
 if __name__ == '__main__':

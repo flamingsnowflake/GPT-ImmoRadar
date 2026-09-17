@@ -16,6 +16,8 @@ The monitor detects new and duplicate listings, extracts portal IDs and listing 
 
 Telegram is the main working interface.
 
+The complete command and button reference is in [`docs/telegram.md`](docs/telegram.md); the same compact overview is available through `/help` and `/start` in Telegram.
+
 It can:
 
 - show new listings, provisional ranges and final scores;

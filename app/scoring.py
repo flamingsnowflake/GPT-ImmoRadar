@@ -1,3 +1,5 @@
+import math
+
 from config_loader import CONFIG
 from house_budget import house_costs
 from geo_precision import (
@@ -7,6 +9,9 @@ from geo_precision import (
     clear_geo_derived_data,
     effective_geo_precision,
 )
+
+
+SCORE_CEILING = 110
 
 
 def price_points(price, config):
@@ -75,6 +80,169 @@ def classify_score(score, thresholds):
         return "archive"
 
     return "low"
+
+
+def _round_score(value):
+
+    return int(float(value) + 0.5)
+
+
+def _distance_km(latitude, longitude, target_latitude, target_longitude):
+
+    radius_km = 6371.0088
+    latitude_1 = math.radians(float(latitude))
+    latitude_2 = math.radians(float(target_latitude))
+    latitude_delta = latitude_2 - latitude_1
+    longitude_delta = math.radians(
+        float(target_longitude) - float(longitude)
+    )
+
+    haversine = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(latitude_1)
+        * math.cos(latitude_2)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+
+    return radius_km * 2 * math.atan2(
+        math.sqrt(haversine),
+        math.sqrt(max(0.0, 1.0 - haversine)),
+    )
+
+
+def location_weighting_details(base_score, property_data, config):
+
+    if not config or not config.get("enabled"):
+        return {
+            "score": int(base_score),
+            "base_score": int(base_score),
+            "location_weighting_applied": False,
+        }
+
+    override = property_data.get(
+        "_proximity_score_override"
+    )
+
+    latitude = property_data.get("manual_latitude")
+    longitude = property_data.get("manual_longitude")
+
+    if latitude is None or longitude is None:
+        latitude = property_data.get("latitude")
+        longitude = property_data.get("longitude")
+
+    if override is None and (
+        latitude is None or longitude is None
+    ):
+        return None
+
+    reference_name = str(
+        config.get("reference_name") or "Referenzort"
+    )
+    max_distance_km = float(
+        config.get("max_distance_km", 100.0)
+    )
+    base_weight = float(
+        config.get("existing_score_weight", 0.8)
+    )
+    proximity_weight = float(
+        config.get("proximity_score_weight", 0.3)
+    )
+    if max_distance_km <= 0:
+        raise ValueError(
+            "max_distance_km must be positive"
+        )
+
+    if (
+        base_weight < 0
+        or proximity_weight < 0
+    ):
+        raise ValueError(
+            "preference score values must not be negative"
+        )
+
+    if not math.isclose(
+        base_weight + proximity_weight,
+        1.0,
+        abs_tol=1e-9,
+    ):
+        raise ValueError(
+            "location weighting percentages must add up to 100"
+        )
+
+    if override is None:
+        distance_km = _distance_km(
+            latitude,
+            longitude,
+            config["latitude"],
+            config["longitude"],
+        )
+        proximity_score = max(
+            0.0,
+            min(
+                100.0,
+                100.0
+                * (1.0 - distance_km / max_distance_km),
+            ),
+        )
+    else:
+        distance_km = None
+        proximity_score = max(
+            0.0,
+            min(100.0, float(override)),
+        )
+
+    score = _round_score(
+        float(base_score) * base_weight
+        + proximity_score * proximity_weight
+    )
+
+    return {
+        "score": max(0, min(SCORE_CEILING, score)),
+        "base_score": int(base_score),
+        "location_weighting_applied": True,
+        "location_reference": reference_name,
+        "distance_to_reference_km": (
+            None
+            if distance_km is None
+            else round(distance_km, 3)
+        ),
+        "proximity_score": round(proximity_score, 3),
+        "existing_score_weight": base_weight,
+        "proximity_score_weight": proximity_weight,
+    }
+
+
+def _location_reason(details):
+
+    reference = details["location_reference"]
+    distance = details["distance_to_reference_km"]
+    proximity = details["proximity_score"]
+    base_percent = details["existing_score_weight"] * 100
+    proximity_percent = details["proximity_score_weight"] * 100
+
+    if distance is None:
+        return (
+            f"Entfernung zu {reference}: "
+            f"Nähe {proximity:.1f}/100 (vorläufig)"
+        )
+
+    return (
+        f"Entfernung zu {reference}: {distance:.1f} km, "
+        f"Nähe {proximity:.1f}/100; "
+        f"Gewichteter {reference}-Score: "
+        f"{base_percent:.0f} % × {details['base_score']} + "
+        f"{proximity_percent:.0f} % × {proximity:.1f} "
+        f"= {details['score']}"
+    )
+
+
+def _location_incomplete_reason(config):
+
+    reference = str(
+        (config or {}).get("reference_name")
+        or "Referenzort"
+    )
+    return f"Entfernung zu {reference}"
 
 
 OHNE_MAKLER_PRICE_DISCOUNT_PERCENT = 3.0
@@ -824,6 +992,9 @@ def _provisional_variants(
         candidate["noise_checked_at"] = "PROVISIONAL"
         candidate["rail_distance_m"] = None
 
+    low["_proximity_score_override"] = 0
+    high["_proximity_score_override"] = 100
+
     if neighbour_values:
         low["neighbour_class"] = min(
             neighbour_values,
@@ -867,6 +1038,10 @@ def _non_geo_reasons(reasons, object_type):
             "Ruhe:",
             "Wasser:",
         )
+    )
+
+    prefixes = prefixes + (
+        "Entfernung zu ",
     )
 
     return [
@@ -962,11 +1137,8 @@ def _provisional_result(
 
 def score_land(property_data):
 
-    config = (
-        CONFIG
-        .score_config()
-        .get("land", {})
-    )
+    root_config = CONFIG.score_config()
+    config = root_config.get("land", {})
 
     hard = config.get(
         "hard_filters",
@@ -1352,10 +1524,45 @@ def score_land(property_data):
         noise_reason
     )
 
-    score = max(
+    base_score = max(
         0,
-        min(100, score),
+        min(SCORE_CEILING, score),
     )
+
+    location_config = root_config.get(
+        "location_weighting", {}
+    )
+    location_details = location_weighting_details(
+        base_score,
+        property_data,
+        location_config,
+    )
+
+    if location_details is None:
+        incomplete_reasons.append(
+            _location_incomplete_reason(location_config)
+        )
+
+    if incomplete_reasons:
+        reasons.append(
+            "Unvollständig: "
+            + ", ".join(incomplete_reasons)
+        )
+        return {
+            "ko": False,
+            "score": None,
+            "rating": "incomplete",
+            "reasons": reasons,
+            "ko_reasons": [],
+            "incomplete_reasons": incomplete_reasons,
+        }
+
+    score = location_details["score"]
+
+    if location_details["location_weighting_applied"]:
+        reasons.append(
+            _location_reason(location_details)
+        )
 
 
     rating = classify_score(
@@ -1374,7 +1581,9 @@ def score_land(property_data):
 
         "reasons": reasons,
 
-        "ko_reasons": []
+        "ko_reasons": [],
+
+        **location_details,
     }
 
 ENERGY_CLASS_ORDER = (
@@ -1656,11 +1865,8 @@ def _house_water_points(
 
 def score_house(property_data, ignore_search_limits=False):
 
-    config = (
-        CONFIG
-        .score_config()
-        .get("house", {})
-    )
+    root_config = CONFIG.score_config()
+    config = root_config.get("house", {})
 
     hard = config.get(
         "hard_filters",
@@ -2081,8 +2287,7 @@ def score_house(property_data, ignore_search_limits=False):
     reasons.append(
         "Ruhe: "
         f"{quiet_score}/15 | "
-        f"Lärm: {noise_adjustment:+d} "
-        f"({noise_reason})"
+        f"{noise_reason}"
     )
 
 
@@ -2250,6 +2455,28 @@ def score_house(property_data, ignore_search_limits=False):
             "Lärm"
         )
 
+    base_score = max(
+        0,
+        min(
+            SCORE_CEILING,
+            int(score),
+        ),
+    )
+
+    location_config = root_config.get(
+        "location_weighting", {}
+    )
+    location_details = location_weighting_details(
+        base_score,
+        property_data,
+        location_config,
+    )
+
+    if location_details is None:
+        incomplete_reasons.append(
+            _location_incomplete_reason(location_config)
+        )
+
     if incomplete_reasons:
 
         reasons.append(
@@ -2269,13 +2496,12 @@ def score_house(property_data, ignore_search_limits=False):
                 incomplete_reasons,
         }
 
-    score = max(
-        0,
-        min(
-            100,
-            int(score),
-        ),
-    )
+    score = location_details["score"]
+
+    if location_details["location_weighting_applied"]:
+        reasons.append(
+            _location_reason(location_details)
+        )
 
     rating = classify_score(
         score,
@@ -2292,4 +2518,5 @@ def score_house(property_data, ignore_search_limits=False):
         "reasons": reasons,
         "ko_reasons": [],
         "incomplete_reasons": [],
+        **location_details,
     }

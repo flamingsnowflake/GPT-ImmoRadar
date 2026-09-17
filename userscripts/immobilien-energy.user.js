@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Immobilienmonitor – Browser & Energie
 // @namespace    https://example.invalid/immoradar/
-// @version      1.3.1
+// @version      1.3.3
 // @description  Sendet Browserdaten inklusive Energie-DOM-Hinweisen automatisch an den Immobilienmonitor; manueller Energieversand bleibt als Fallback.
 // @match        https://www.immobilienscout24.de/expose/*
 // @match        https://www.immowelt.de/expose/*
@@ -1614,6 +1614,23 @@
         );
     }
 
+    function positionPanel(panel, info) {
+        const mobileImmowelt =
+            info.portal === "immowelt" &&
+            window.matchMedia(
+                "(max-width: 768px)"
+            ).matches;
+
+        panel.style.right =
+            mobileImmowelt ? "12px" : "18px";
+        panel.style.bottom = mobileImmowelt
+            ? "calc(96px + env(safe-area-inset-bottom, 0px))"
+            : "18px";
+        panel.style.maxWidth = mobileImmowelt
+            ? "calc(100vw - 24px)"
+            : "440px";
+    }
+
     function createPanel() {
         if (
             document.getElementById(
@@ -1638,8 +1655,6 @@
             panel.style,
             {
                 position: "fixed",
-                right: "18px",
-                bottom: "18px",
                 zIndex: "2147483645",
                 display: "flex",
                 flexDirection: "column",
@@ -1647,8 +1662,16 @@
                 gap: "6px",
                 fontFamily:
                     "Arial, sans-serif",
-                maxWidth: "440px",
             }
+        );
+
+        const updatePanelPosition = () =>
+            positionPanel(panel, info);
+
+        updatePanelPosition();
+        window.addEventListener(
+            "resize",
+            updatePanelPosition
         );
 
         const status =

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Immobilienmonitor – Browser & Energie
 // @namespace    https://example.invalid/immoradar/
-// @version      1.3.2
+// @version      1.3.3
 // @description  Sendet Browserdaten inklusive Energie-DOM-Hinweisen automatisch an den Immobilienmonitor; manueller Energieversand bleibt als Fallback.
 // @match        https://www.immobilienscout24.de/expose/*
 // @match        https://www.immowelt.de/expose/*
@@ -892,13 +892,23 @@
         sendBrowserEnrichment(payload);
     }
 
+    function positionPanel(panel, info) {
+        const mobileImmowelt = info.portal === "immowelt" && window.matchMedia("(max-width: 768px)").matches;
+        panel.style.right = mobileImmowelt ? "12px" : "18px";
+        panel.style.bottom = mobileImmowelt ? "calc(96px + env(safe-area-inset-bottom, 0px))" : "18px";
+        panel.style.maxWidth = mobileImmowelt ? "calc(100vw - 24px)" : "440px";
+    }
+
     function createPanel() {
         if (document.getElementById("immo-monitor-panel")) return;
         const info = portalInfo();
         if (!info) return;
         const panel = document.createElement("div");
         panel.id = "immo-monitor-panel";
-        Object.assign(panel.style, {position: "fixed", right: "18px", bottom: "18px", zIndex: "2147483645", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "6px", fontFamily: "Arial, sans-serif", maxWidth: "440px"});
+        Object.assign(panel.style, {position: "fixed", zIndex: "2147483645", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "6px", fontFamily: "Arial, sans-serif"});
+        const updatePanelPosition = () => positionPanel(panel, info);
+        updatePanelPosition();
+        window.addEventListener("resize", updatePanelPosition);
         const status = document.createElement("div");
         status.id = "immo-monitor-browser-status";
         status.textContent = "🏠 Monitor: prüfe Seite …";

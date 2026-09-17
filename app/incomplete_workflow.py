@@ -14,6 +14,9 @@ from geo_precision import (
     effective_geo_precision,
     provisional_score_range,
 )
+from lab_waitlist import (
+    waiting_portal_ids,
+)
 
 
 CONDITION_BUTTONS = (
@@ -292,7 +295,7 @@ def _geo_missing(row):
     )
 
 
-def condition_rows(db_path):
+def _condition_rows_all(db_path):
 
     return [
         row
@@ -302,6 +305,34 @@ def condition_rows(db_path):
             in ("house", "farm")
             and _condition_unknown(row)
         )
+    ]
+
+
+def condition_rows(db_path):
+
+    waiting = waiting_portal_ids(
+        db_path,
+        "condition",
+    )
+
+    return [
+        row
+        for row in _condition_rows_all(db_path)
+        if str(row.get("portal_id") or "") not in waiting
+    ]
+
+
+def waiting_condition_rows(db_path):
+
+    waiting = waiting_portal_ids(
+        db_path,
+        "condition",
+    )
+
+    return [
+        row
+        for row in _condition_rows_all(db_path)
+        if str(row.get("portal_id") or "") in waiting
     ]
 
 
@@ -362,7 +393,7 @@ def geo_rows(db_path):
     ]
 
 
-def locality_rows(db_path):
+def _locality_rows_all(db_path):
 
     ensure_user_status_table(
         db_path
@@ -425,6 +456,34 @@ def locality_rows(db_path):
     return result
 
 
+def locality_rows(db_path):
+
+    waiting = waiting_portal_ids(
+        db_path,
+        "locality",
+    )
+
+    return [
+        row
+        for row in _locality_rows_all(db_path)
+        if str(row.get("portal_id") or "") not in waiting
+    ]
+
+
+def waiting_locality_rows(db_path):
+
+    waiting = waiting_portal_ids(
+        db_path,
+        "locality",
+    )
+
+    return [
+        row
+        for row in _locality_rows_all(db_path)
+        if str(row.get("portal_id") or "") in waiting
+    ]
+
+
 def stats(db_path):
 
     rows = get_incomplete_rows(db_path)
@@ -432,13 +491,21 @@ def stats(db_path):
     result = {
         "Objekte": len(rows),
         "Energie": 0,
-        "Zustand": 0,
+        "Zustand": len(
+            condition_rows(db_path)
+        ),
         "Preis": 0,
         "Wohnfläche": 0,
         "Grundstück": 0,
         "Geo": 0,
         "Lage präzisieren": len(
             locality_rows(db_path)
+        ),
+        "Zustand angefragt": len(
+            waiting_condition_rows(db_path)
+        ),
+        "Lage angefragt": len(
+            waiting_locality_rows(db_path)
         ),
     }
 
@@ -452,13 +519,6 @@ def stats(db_path):
             and _energy_incomplete(row)
         ):
             result["Energie"] += 1
-
-        if (
-            row.get("property_type")
-            in ("house", "farm")
-            and _condition_unknown(row)
-        ):
-            result["Zustand"] += 1
 
         if row.get("price") is None:
             result["Preis"] += 1
@@ -482,6 +542,8 @@ def overview_text(db_path):
     if (
         current["Objekte"] == 0
         and current["Lage präzisieren"] == 0
+        and current["Zustand angefragt"] == 0
+        and current["Lage angefragt"] == 0
     ):
         return (
             "✅ Keine unvollständigen "
@@ -507,6 +569,21 @@ def overview_text(db_path):
         "📌 Lage präzisieren: "
         f"{current['Lage präzisieren']}",
     ]
+
+    if (
+        current["Zustand angefragt"]
+        or current["Lage angefragt"]
+    ):
+        lines.extend(
+            [
+                "",
+                "Warteliste:",
+                "📨 Zustand: "
+                f"{current['Zustand angefragt']}",
+                "📨 Lage: "
+                f"{current['Lage angefragt']}",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -569,12 +646,43 @@ def overview_keyboard(db_path):
             ]
         )
 
+    if current["Zustand angefragt"]:
+        rows.append(
+            [
+                {
+                    "text": (
+                        "📨 Zustand-Warteliste "
+                        f"({current['Zustand angefragt']})"
+                    ),
+                    "callback_data": "iw:wait_condition",
+                }
+            ]
+        )
+
+    if current["Lage angefragt"]:
+        rows.append(
+            [
+                {
+                    "text": (
+                        "📨 Lage-Warteliste "
+                        f"({current['Lage angefragt']})"
+                    ),
+                    "callback_data": "iw:wait_locality",
+                }
+            ]
+        )
+
     return {
         "inline_keyboard": rows
     }
 
 
-def condition_text(row, position, total):
+def condition_text(
+    row,
+    position,
+    total,
+    waiting=False,
+):
 
     title = (
         row.get("title")
@@ -588,7 +696,12 @@ def condition_text(row, position, total):
     )
 
     lines = [
-        f"🔧 ZUSTAND · {position}/{total}",
+        (
+            "📨 ZUSTAND-WARTELISTE"
+            if waiting
+            else "🔧 ZUSTAND"
+        )
+        + f" · {position}/{total}",
         "",
         title,
         f"📍 {location}",
@@ -678,7 +791,10 @@ def condition_text(row, position, total):
     return "\n".join(lines)
 
 
-def condition_keyboard(row):
+def condition_keyboard(
+    row,
+    waiting=False,
+):
 
     portal_id = str(
         row.get("portal_id")
@@ -694,10 +810,58 @@ def condition_keyboard(row):
                 {
                     "text": label,
                     "callback_data": (
-                        f"c:{portal_id}:{code}:iwc"
+                        f"c:{portal_id}:{code}:"
+                        + (
+                            "iwcw"
+                            if waiting
+                            else "iwc"
+                        )
                     ),
                 }
                 for label, code in button_row
+            ]
+        )
+
+    rows.append(
+        [
+            {
+                "text": "🙈 Kein Interesse",
+                "callback_data": (
+                    "iw_nope:"
+                    + (
+                        "cw"
+                        if waiting
+                        else "ca"
+                    )
+                    + f":{portal_id}"
+                ),
+            },
+            {
+                "text": (
+                    "↩️ Wieder offen"
+                    if waiting
+                    else "📩 Information angefragt"
+                ),
+                "callback_data": (
+                    "iwq:"
+                    + (
+                        "open:c"
+                        if waiting
+                        else "add:c"
+                    )
+                    + f":{portal_id}"
+                ),
+            },
+        ]
+    )
+
+    if waiting:
+        rows.append(
+            [
+                {
+                    "text": "⏭ Nächster Wartelistenfall",
+                    "callback_data": f"iwq:skip:c:{portal_id}",
+                }
             ]
         )
 
@@ -958,7 +1122,12 @@ def geo_keyboard(row):
     }
 
 
-def locality_text(row, position, total):
+def locality_text(
+    row,
+    position,
+    total,
+    waiting=False,
+):
 
     title = (
         row.get("title")
@@ -976,7 +1145,12 @@ def locality_text(row, position, total):
     )
 
     lines = [
-        f"📌 LAGE PRÄZISIEREN · {position}/{total}",
+        (
+            "📨 LAGE-WARTELISTE"
+            if waiting
+            else "📌 LAGE PRÄZISIEREN"
+        )
+        + f" · {position}/{total}",
         "",
         title,
         f"📍 Portal-Ort: {location}",
@@ -1013,7 +1187,10 @@ def locality_text(row, position, total):
 
     return "\n".join(lines)
 
-def locality_keyboard(row):
+def locality_keyboard(
+    row,
+    waiting=False,
+):
 
     portal_id = str(
         row.get("portal_id")
@@ -1032,17 +1209,58 @@ def locality_keyboard(row):
                     "text": "📍 Adresse/Koordinaten setzen",
                     "callback_data": (
                         f"coords_set:{portal_id}:"
-                        f"{property_type}:iwl"
+                        f"{property_type}:"
+                        + (
+                            "iwlw"
+                            if waiting
+                            else "iwl"
+                        )
                     ),
                 }
             ],
             [
                 {
-                    "text": "⏭ Überspringen",
+                    "text": "🙈 Kein Interesse",
                     "callback_data": (
-                        f"iwl_skip:{portal_id}"
+                        "iw_nope:"
+                        + (
+                            "lw"
+                            if waiting
+                            else "la"
+                        )
+                        + f":{portal_id}"
                     ),
-                }
+                },
+                {
+                    "text": (
+                        "↩️ Wieder offen"
+                        if waiting
+                        else "📩 Information angefragt"
+                    ),
+                    "callback_data": (
+                        "iwq:"
+                        + (
+                            "open:l"
+                            if waiting
+                            else "add:l"
+                        )
+                        + f":{portal_id}"
+                    ),
+                },
+            ],
+            [
+                {
+                    "text": (
+                        "⏭ Nächster Wartelistenfall"
+                        if waiting
+                        else "⏭ Überspringen"
+                    ),
+                    "callback_data": (
+                        f"iwq:skip:l:{portal_id}"
+                        if waiting
+                        else f"iwl_skip:{portal_id}"
+                    ),
+                },
             ],
             [
                 {

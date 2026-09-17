@@ -152,7 +152,7 @@ It can produce normal enrichment results, browser blacklist results and terminal
 
 ### Tampermonkey userscript
 
-The production userscript is `Immobilienmonitor – Browser & Energie` v1.3.1.
+The production userscript is `Immobilienmonitor – Browser & Energie` v1.3.3.
 
 Its responsibilities include:
 

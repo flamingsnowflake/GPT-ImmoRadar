@@ -250,16 +250,73 @@ Decision:
 - Changes should be copy/paste-safe and include syntax/tests where practical.
 - Security/privacy checks are part of the release process, not an afterthought.
 
-## Niedersachsen geo coverage
+## Plötzkau distance weighting
+
+Superseded for the production weights and isolation thresholds by **Strong isolation preference** below; retained as history.
 
 Decision:
 
-The original geo enrichment was built around Sachsen-Anhalt official WFS services because that was the initial search region. The active search area now also includes Niedersachsen.
+- Keep the established property score as the explainable base score.
+- Rank completed candidates with 70% base score, 20% proximity to Plötzkau and an isolation preference worth up to 10 final points.
+- Define proximity as a linear score from 100 at Plötzkau to 0 at and beyond 100 km.
+- Add 10 final points for `isolated` and 8 for `few_neighbours`; keep all other neighbour classes at zero extra preference points.
+- Exclude plots below 1,000 m² and apply a stronger plot-point reduction below 2,000 m².
+- Require exact coordinates for a definitive combined score; preserve a provisional range for locality-only candidates.
+- Keep an operator's reference point in local configuration only. The public example exposes the feature with generic, disabled values.
+
+## Regional geo coverage
+
+Decision:
+
+The original geo enrichment was built around Sachsen-Anhalt official WFS services because that was the initial search region. The active search area now also includes Niedersachsen and Brandenburg.
 
 - Keep the existing Sachsen-Anhalt ATKIS/ALKIS WFS sources.
-- Add equivalent official Niedersachsen LGLN INSPIRE WFS sources for physical water and 2D buildings.
-- Preserve the existing water scoring model and neighbour classification semantics across both states.
+- Use the official Niedersachsen LGLN INSPIRE WFS sources for physical water and 2D buildings.
+- Use the official Brandenburg GeoBasis-DE/LGB INSPIRE WFS sources for ATKIS physical water and ALKIS 2D buildings.
+- Preserve the existing water scoring model and neighbour classification semantics across all supported states.
 - Noise enrichment remains based on nationwide/federal/EEA sources as already implemented.
 - Never treat an out-of-coverage state service returning no features as evidence for `none_nearby` or `isolated`.
 
-Immediate regression targets include Niedersachsen properties in Hitzacker and Osterode/Lerbach, including Ohne-Makler object `OM-469963`.
+Regression targets include Niedersachsen properties in Hitzacker and Osterode/Lerbach, including Ohne-Makler object `OM-469963`, plus production object `933` for Brandenburg.
+
+## Strong isolation preference
+
+Superseded by **Single neighbour component and 80/20 Plötzkau weighting** below; retained as history.
+
+Decision:
+
+- Keep proximity to Plötzkau at 20% of the final score.
+- Use 60% of the independent base score and reserve up to 20 final points for the isolation preference.
+- Award the final preference as 20 points for `isolated` and 15 for `few_neighbours`.
+- Classify `isolated` only when the nearest foreign building polygon is at least 200 m away.
+- Classify `few_neighbours` only when no more than two foreign building polygons are within 50 m.
+- Persist the new 50 m building count; do not infer it from the older 100 m count.
+- Apply the plot scale 3/7/10/15/20 at 1,000/1,500/2,000/3,000/5,000 m² to both house/farm and land.
+
+## Single neighbour component and 80/20 Plötzkau weighting
+
+Decision:
+
+- Keep Freilage and neighbour density exclusively in the existing base-score neighbour component; do not add a separate preference bonus.
+- Calculate the Plötzkau score as 80% of the independent base score plus 20% of the linear proximity score.
+- Classify `isolated` when the nearest foreign building polygon is at least 100 m away, or when a completed search finds no foreign building in its search radius.
+- Keep `few_neighbours` for properties with no more than two foreign building polygons within 50 m that do not qualify as `isolated`.
+- Reclassify stored completed neighbour checks from their persisted measurements when current scores are recalculated.
+
+## Strong positive energy labels
+
+Decision:
+
+- Reward documented investment in efficiency, insulation and sustainability more strongly in the house/farm base score.
+- Apply `C +1`, `B +3`, `A +5` and `A+ +8`.
+- Keep the existing neutral value for `D` and the existing penalties and unresolved-state rules for weaker, missing or unavailable energy evidence.
+- Permit exceptional scores above 100 and cap both independent and weighted results at 110 instead of discarding the positive energy investment at the old ceiling.
+
+## Search reset and neutral location ranking
+
+Decision:
+
+- Archive the completed search database outside the live runtime and start the production database empty.
+- Keep reference-location weighting disabled in the public baseline until an operator deliberately configures a relevant reference point.
+- Retain the configurable 80/20 reference-location feature for a future search, but require a deliberate new reference point before enabling it.
+- Keep the scoring, enrichment, Telegram and Labor functionality as the final reusable product baseline and publish one final sanitized public snapshot from that state.

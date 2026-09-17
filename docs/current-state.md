@@ -1,8 +1,12 @@
 # Current State
 
-Last updated: 2026-09-02
+Last updated: 2026-09-17
 
 ## Production status
+
+This release captures the reusable application baseline after a completed production search and operator reset. Runtime databases and prior search state are not part of the public distribution.
+
+The Plötzkau location weighting is disabled for the new search. The configurable 80/20 location-weighting feature remains available, but a new reference location must be chosen deliberately before it is enabled again. Until then, ranking uses the independent score only.
 
 The unified Telegram/browser workflow is live and has been tested end to end on both Immowelt and ImmoScout24.
 
@@ -64,18 +68,18 @@ Production browser script:
 
 ```text
 Immobilienmonitor – Browser & Energie
-version 1.3.1
+version 1.3.3
 ```
 
 The exact generated production archive is stored under:
 
 ```text
-userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.1.zip
+userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.3.zip
 ```
 
 The archive contains the `.user.js` used in production. The previous `userscripts/immobilien-energy.user.js` v0.2.0 was obsolete and must not be treated as the canonical production userscript.
 
-v1.3.1 includes SPA route handling, Immowelt detail expansion, ImmoScout24 DOM energy hints, automatic browser enrichment, manual Energy fallback and the fix that closes only an Immowelt energy dialog opened by the script itself.
+v1.3.3 includes SPA route handling, Immowelt detail expansion, ImmoScout24 DOM energy hints, automatic browser enrichment, manual Energy fallback, safe mobile placement above Immowelt's contact bar and the fix that closes only an Immowelt energy dialog opened by the script itself.
 
 ## Scoring completeness and zero values
 
@@ -97,6 +101,14 @@ Energy class D = 0   -> known neutral adjustment
 A property remains `incomplete` only while a required category is genuinely unresolved according to its evidence/state fields. The final numeric total is withheld in that case. A hard KO may still surface earlier.
 
 See `docs/scoring.md` for the detailed current model.
+
+Completed properties currently rank by the independent scoring model because location weighting is disabled after the search reset. The optional location model can combine 80% of that independent score with 20% proximity to a configured reference point. Freilage is scored only inside the ordinary neighbour component: `isolated` requires at least 100 m to the nearest foreign building polygon, while `few_neighbours` permits at most two foreign building polygons within 50 m. House/farm and land candidates below 1,000 m² are hard exclusions; both models award plot points on the 3/7/10/15/20 scale for 1,000/1,500/2,000/3,000/5,000 m². The database stores the component values in `score_details`; locality-only candidates remain provisional until exact coordinates are known.
+
+Positive house/farm energy labels contribute `C +1`, `B +3`, `A +5` and `A+ +8`. Both score paths permit exceptional results above 100 with a hard ceiling at 110. A perfect brokered house can reach 108 independently and 106 with maximum reference-point proximity; the existing Ohne-Makler bonus can raise those ceilings to 110 and 108 respectively.
+
+When location weighting is enabled, Telegram displays the independent base score first and the weighted reference-location score directly below it. Freilage contributes through the regular neighbour component in the base score, which supplies 80% of the weighted score.
+
+With location weighting disabled, `/top3house`, `/top10house` and their `_ohne` companions rank the same independent score. When a reference location is enabled, the regular commands use its weighted score and the `_ohne` commands keep the independent ranking. Chance cards include a direct, reversible `Lage angefragt` action that moves the property into the locality waitlist without replacing the card.
 
 ## Noise semantics and rail fallback
 
@@ -221,9 +233,9 @@ The Telegram result explicitly reports which checks were recalculated and which 
 
 ### Regional data coverage
 
-The high-quality water and neighbour/building enrichment paths were originally backed only by Sachsen-Anhalt state geodata services. Niedersachsen is now part of the active search area and therefore needs equivalent official LGLN sources. Noise enrichment is already based on nationwide/federal/EEA sources (with a more sensitive Saxony air-noise layer where available), so the immediate Niedersachsen gap is water plus building/neighbour data.
+The high-quality water and neighbour/building enrichment paths use official state geodata services for Sachsen-Anhalt, Niedersachsen and Brandenburg. Brandenburg uses the GeoBasis-DE/LGB ATKIS physical-water WFS and ALKIS 2D-building WFS. All three adapters feed the same water scoring and neighbour classification. Noise enrichment remains based on nationwide/federal/EEA sources (with a more sensitive Saxony air-noise layer where available). Unsupported states remain explicitly unknown rather than being mistaken for empty water or building coverage.
 
-Tracked in private issue #1.
+Niedersachsen rollout was tracked in private issue #1.
 
 ## Ohne-Makler scoring
 

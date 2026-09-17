@@ -7,6 +7,7 @@ from pathlib import Path
 from config_loader import CONFIG
 from scoring import score_house, score_land
 from property_types import is_house_type
+from neighbour_policy import reclassify_stored_neighbours
 
 
 def rescore(db_path, apply=False):
@@ -23,6 +24,10 @@ def rescore(db_path, apply=False):
             if p.get('rating') in ('blacklisted', 'deleted', 'offline', 'not_interested') or details.get('blacklisted'):
                 counts['preserved_exclusions'] += 1
                 continue
+            current_neighbour_class = p.get('neighbour_class')
+            p['neighbour_class'] = reclassify_stored_neighbours(p)
+            if p['neighbour_class'] != current_neighbour_class:
+                counts['neighbour_class_changed'] += 1
             scorer = score_house if is_house_type(p['property_type']) else score_land
             result = scorer(p)
             if details.get('geo_errors'):
@@ -33,8 +38,8 @@ def rescore(db_path, apply=False):
             if (p.get('score'), p.get('rating'), bool(p.get('is_ko'))) != (result['score'], result['rating'], result['ko']):
                 counts['changed'] += 1
             if apply:
-                conn.execute('UPDATE properties SET score=?, rating=?, is_ko=?, score_details=? WHERE id=?',
-                             (result['score'], result['rating'], int(result['ko']), json.dumps(result, ensure_ascii=False), p['id']))
+                conn.execute('UPDATE properties SET neighbour_class=?, score=?, rating=?, is_ko=?, score_details=? WHERE id=?',
+                             (p['neighbour_class'], result['score'], result['rating'], int(result['ko']), json.dumps(result, ensure_ascii=False), p['id']))
         conn.commit() if apply else conn.rollback()
         return dict(counts)
     finally:

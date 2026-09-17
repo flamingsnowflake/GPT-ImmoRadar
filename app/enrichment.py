@@ -465,6 +465,20 @@ NIEDERSACHSEN_BUILDING_TYPENAME = (
     "ave:GebaeudeBauwerk"
 )
 
+BRANDENBURG_WATER_WFS_URL = (
+    "https://inspire.brandenburg.de/"
+    "services/hy-p_bdlm_wfs"
+)
+
+BRANDENBURG_BUILDING_WFS_URL = (
+    "https://inspire.brandenburg.de/"
+    "services/bu_alkis_wfs"
+)
+
+BRANDENBURG_BUILDING_TYPENAME = (
+    "bu-core2d:Building"
+)
+
 
 FEDERAL_STATES = {
 
@@ -485,7 +499,7 @@ FEDERAL_STATES = {
 
     "DE-BB": {
         "name": "Brandenburg",
-        "geo_supported": False,
+        "geo_supported": True,
     },
 
     "DE-HB": {
@@ -787,7 +801,7 @@ def find_best_water(
         longitude,
     )
 
-    if state_code == "DE-NI":
+    if state_code in ("DE-NI", "DE-BB"):
 
         point_x, point_y = (
             _transform_to_25832.transform(
@@ -804,14 +818,25 @@ def find_best_water(
             "urn:ogc:def:crs:EPSG::25832"
         )
 
-        wfs_url = (
-            NIEDERSACHSEN_WATER_WFS_URL
-        )
+        if state_code == "DE-NI":
+            wfs_url = (
+                NIEDERSACHSEN_WATER_WFS_URL
+            )
 
-        water_source = (
-            "LGLN Niedersachsen "
-            "ATKIS HY-P WFS"
-        )
+            water_source = (
+                "LGLN Niedersachsen "
+                "ATKIS HY-P WFS"
+            )
+
+        else:
+            wfs_url = (
+                BRANDENBURG_WATER_WFS_URL
+            )
+
+            water_source = (
+                "GeoBasis-DE/LGB Brandenburg "
+                "ATKIS HY-P WFS"
+            )
 
     elif state_code == "DE-ST":
 
@@ -1220,11 +1245,15 @@ def _parse_gml_polygon(poslist_text):
 
 
 
-def _find_neighbour_buildings_niedersachsen(
+def _find_neighbour_buildings_projected(
     latitude,
     longitude,
     radius_m=500,
     ignore_within_m=20,
+    wfs_url=NIEDERSACHSEN_BUILDING_WFS_URL,
+    typename=NIEDERSACHSEN_BUILDING_TYPENAME,
+    service_name="Niedersachsen Building WFS",
+    log_prefix="WFS BUILDINGS NI",
 ):
 
     point_x, point_y = (
@@ -1251,8 +1280,7 @@ def _find_neighbour_buildings_niedersachsen(
         "service": "WFS",
         "version": "2.0.0",
         "request": "GetFeature",
-        "typeNames":
-            NIEDERSACHSEN_BUILDING_TYPENAME,
+        "typeNames": typename,
         "srsName":
             "urn:ogc:def:crs:EPSG::25832",
         "bbox": bbox,
@@ -1260,12 +1288,12 @@ def _find_neighbour_buildings_niedersachsen(
     })
 
     url = (
-        f"{NIEDERSACHSEN_BUILDING_WFS_URL}"
+        f"{wfs_url}"
         f"?{params}"
     )
 
     print(
-        "WFS BUILDINGS NI: querying "
+        f"{log_prefix}: querying "
         f"{radius_m} m radius",
         flush=True,
     )
@@ -1294,7 +1322,7 @@ def _find_neighbour_buildings_niedersachsen(
     except Exception as exc:
 
         raise RuntimeError(
-            "Niedersachsen Building WFS "
+            f"{service_name} "
             "request failed: "
             f"{type(exc).__name__}: "
             f"{exc}"
@@ -1309,7 +1337,7 @@ def _find_neighbour_buildings_niedersachsen(
     except ET.ParseError as exc:
 
         raise RuntimeError(
-            "Niedersachsen Building WFS "
+            f"{service_name} "
             f"returned invalid XML: {exc}"
         ) from exc
 
@@ -1327,7 +1355,7 @@ def _find_neighbour_buildings_niedersachsen(
         )
 
         raise RuntimeError(
-            "Niedersachsen Building WFS "
+            f"{service_name} "
             f"error: {error_text}"
         )
 
@@ -1380,6 +1408,12 @@ def _find_neighbour_buildings_niedersachsen(
         "nearest_building_m":
             nearest,
 
+        "buildings_50m": sum(
+            1
+            for distance in distances
+            if distance <= 50
+        ),
+
         "buildings_100m": sum(
             1
             for distance in distances
@@ -1403,8 +1437,9 @@ def _find_neighbour_buildings_niedersachsen(
     }
 
     print(
-        "WFS BUILDINGS NI: "
+        f"{log_prefix}: "
         f"{polygon_count} polygon(s) parsed | "
+        f"50m={result['buildings_50m']} | "
         f"100m={result['buildings_100m']} | "
         f"250m={result['buildings_250m']} | "
         f"500m={result['buildings_500m']}",
@@ -1429,11 +1464,26 @@ def find_neighbour_buildings(
     if state_code == "DE-NI":
 
         return (
-            _find_neighbour_buildings_niedersachsen(
+            _find_neighbour_buildings_projected(
                 latitude,
                 longitude,
                 radius_m=radius_m,
                 ignore_within_m=ignore_within_m,
+            )
+        )
+
+    if state_code == "DE-BB":
+
+        return (
+            _find_neighbour_buildings_projected(
+                latitude,
+                longitude,
+                radius_m=radius_m,
+                ignore_within_m=ignore_within_m,
+                wfs_url=BRANDENBURG_BUILDING_WFS_URL,
+                typename=BRANDENBURG_BUILDING_TYPENAME,
+                service_name="Brandenburg Building WFS",
+                log_prefix="WFS BUILDINGS BB",
             )
         )
 
@@ -1619,6 +1669,12 @@ def find_neighbour_buildings(
     result = {
         "nearest_building_m": nearest,
 
+        "buildings_50m": sum(
+            1
+            for distance in distances
+            if distance <= 50
+        ),
+
         "buildings_100m": sum(
             1
             for distance in distances
@@ -1644,6 +1700,7 @@ def find_neighbour_buildings(
     print(
         f"WFS BUILDINGS: "
         f"{polygon_count} polygon(s) parsed | "
+        f"50m={result['buildings_50m']} | "
         f"100m={result['buildings_100m']} | "
         f"250m={result['buildings_250m']} | "
         f"500m={result['buildings_500m']}",

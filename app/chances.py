@@ -19,6 +19,21 @@ def best_case_result(property_data):
     if precision != 'exact':
         # A centroid has no reliable parcel-specific geo components.
         clear_geo_derived_data(candidate)
+
+    has_manual_coordinates = (
+        candidate.get('manual_latitude') is not None
+        and candidate.get('manual_longitude') is not None
+    )
+    has_coordinates = (
+        candidate.get('latitude') is not None
+        and candidate.get('longitude') is not None
+    )
+    if not has_manual_coordinates and not has_coordinates:
+        # Distance is an open criterion until an exact point is known.
+        # A chance is the reachable best case, so use the maximum
+        # proximity contribution without persisting that assumption.
+        candidate['_proximity_score_override'] = 100
+
     candidate['_geo_precision_bypass'] = True
     if candidate.get('price') is None:
         candidate['price'] = 0

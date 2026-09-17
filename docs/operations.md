@@ -285,7 +285,7 @@ Backups themselves stay outside the repository.
 
 ## Tampermonkey
 
-The exact production 1.3.1 build is archived under `userscripts/archive/`. Tampermonkey stores the real API tokens in its own userscript storage; real tokens must never be added to the source archive or Git.
+The exact production 1.3.3 build is archived under `userscripts/archive/`. Tampermonkey stores the real API tokens in its own userscript storage; real tokens must never be added to the source archive or Git.
 
 The production build uses deployment-specific endpoints. A public release must replace these with user configuration; see `docs/public-release.md`.
 

@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 from config_loader import CONFIG
-from scoring import score_house
+from scoring import plot_points, score_house
 
 
 class HouseBudgetTests(unittest.TestCase):
@@ -14,6 +14,7 @@ class HouseBudgetTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
         # Synthetic policy for stable boundary tests across deployment profiles.
         config = copy.deepcopy(CONFIG.score_config())
+        self.score_config = config
         config['house']['hard_filters']['max_price'] = 300000
         config['house']['scoring']['price']['condition_surcharge']['good'] = 15000
         policy = patch.object(CONFIG, 'score_config', return_value=config)
@@ -58,3 +59,34 @@ class HouseBudgetTests(unittest.TestCase):
         config['house']['hard_filters']['max_price'] = 310000
         with patch.object(CONFIG, 'score_config', return_value=config):
             self.assertFalse(score_house(self.house(price=295000, condition_class='good'))['ko'])
+
+    def test_plot_below_1000_square_metres_is_ko(self):
+        house = self.house(
+            price=120000,
+            condition_class='good',
+        )
+        house['plot_area'] = 999
+        result = score_house(house)
+
+        self.assertTrue(result['ko'])
+        self.assertIn('Grundstück nur 999 m²', ' '.join(result['ko_reasons']))
+
+    def test_plot_at_1000_square_metres_is_allowed(self):
+        house = self.house(
+            price=120000,
+            condition_class='good',
+        )
+        house['plot_area'] = 1000
+        result = score_house(house)
+
+        self.assertFalse(result['ko'])
+
+    def test_plot_points_drop_sharply_below_2000_square_metres(self):
+        plot_config = self.score_config['house']['scoring']['plot_area']
+
+        self.assertEqual(plot_points(5000, plot_config), 20)
+        self.assertEqual(plot_points(3000, plot_config), 15)
+        self.assertEqual(plot_points(2000, plot_config), 10)
+        self.assertEqual(plot_points(1500, plot_config), 7)
+        self.assertEqual(plot_points(1000, plot_config), 3)
+        self.assertEqual(plot_points(999, plot_config), 0)

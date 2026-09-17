@@ -61,13 +61,13 @@ Immobilienmonitor – Browser & Energie
 Production version:
 
 ```text
-1.3.1
+1.3.3
 ```
 
 Canonical production archive:
 
 ```text
-userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.1.zip
+userscripts/archive/Immobilienmonitor-Browser-Energie-1.3.3.zip
 ```
 
 The archive contains the exact `.user.js` that was tested in production. It contains deployment-specific endpoint hostnames but **no API token values**; tokens are requested at runtime and stored in Tampermonkey userscript storage.
@@ -85,7 +85,8 @@ The userscript:
 7. extracts ImmoScout24's DOM-only energy-class hint when present;
 8. sends page evidence to `/browser-enrich`;
 9. renders a small status panel in the page;
-10. retains an explicit “Energy fallback” path to the separate Energy API.
+10. retains an explicit “Energy fallback” path to the separate Energy API;
+11. positions the panel above Immowelt's native contact bar on mobile viewports and includes the device safe area.
 
 ### Why Python remains canonical
 

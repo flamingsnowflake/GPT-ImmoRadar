@@ -1,9 +1,10 @@
+import argparse
 import sqlite3
 from datetime import datetime, timezone
 
 from monitor import (
-    DB_PATH,
     classify_neighbours,
+    get_db,
 )
 
 from enrichment import (
@@ -13,10 +14,30 @@ from enrichment import (
 
 def main():
 
-    conn = sqlite3.connect(DB_PATH)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Nachbarschaft für alle Häuser, Höfe und "
+            "Grundstücke mit Koordinaten neu abrufen"
+        ),
+    )
+    args = parser.parse_args()
+
+    conn = get_db()
     conn.row_factory = sqlite3.Row
 
-    rows = conn.execute("""
+    where = (
+        "property_type IN ('house', 'farm', 'land')"
+        if args.all
+        else (
+            "property_type = 'land' "
+            "AND neighbour_checked_at IS NULL"
+        )
+    )
+
+    rows = conn.execute(f"""
         SELECT
             id,
             portal,
@@ -28,16 +49,15 @@ def main():
             neighbour_class,
             neighbour_checked_at
         FROM properties
-        WHERE property_type = 'land'
+        WHERE {where}
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
-          AND neighbour_checked_at IS NULL
         ORDER BY id
     """).fetchall()
 
     print(
-        f"Found {len(rows)} LAND object(s) "
-        f"without neighbour enrichment"
+        f"Found {len(rows)} object(s) "
+        f"for neighbour enrichment"
     )
 
     updated = 0
@@ -80,6 +100,7 @@ def main():
                 UPDATE properties
                 SET
                     nearest_building_m = ?,
+                    buildings_50m = ?,
                     buildings_100m = ?,
                     buildings_250m = ?,
                     buildings_500m = ?,
@@ -90,6 +111,9 @@ def main():
                 (
                     buildings.get(
                         "nearest_building_m"
+                    ),
+                    buildings.get(
+                        "buildings_50m"
                     ),
                     buildings.get(
                         "buildings_100m"
@@ -118,6 +142,7 @@ def main():
             )
 
             print(
+                f"50m={buildings.get('buildings_50m')} | "
                 f"100m={buildings.get('buildings_100m')} | "
                 f"250m={buildings.get('buildings_250m')} | "
                 f"500m={buildings.get('buildings_500m')}"

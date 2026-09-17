@@ -45,6 +45,10 @@ from geo_precision import (
     normalize_geo_precision,
     provisional_score_range,
 )
+from score_display import (
+    completed_score_lines,
+)
+from neighbour_policy import classify_neighbours
 
 IMAP_HOST = os.environ["IMAP_HOST"]
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
@@ -224,6 +228,7 @@ def get_db():
         "water_score": "INTEGER",
         "neighbour_class": "TEXT",
         "nearest_building_m": "REAL",
+        "buildings_50m": "INTEGER",
         "buildings_100m": "INTEGER",
         "buildings_250m": "INTEGER",
         "buildings_500m": "INTEGER",
@@ -2040,8 +2045,8 @@ def format_property(p, duplicate=False):
 
         lines.append("")
 
-        lines.append(
-            f"⭐ Score: {p['score']}/100"
+        lines.extend(
+            completed_score_lines(p)
         )
 
         if p.get("rating"):
@@ -2083,6 +2088,7 @@ def load_existing_enrichment(conn, property_data):
             water_score,
             neighbour_class,
             nearest_building_m,
+            buildings_50m,
             buildings_100m,
             buildings_250m,
             buildings_500m,
@@ -2132,6 +2138,7 @@ def load_existing_enrichment(conn, property_data):
         water_score,
         neighbour_class,
         nearest_building_m,
+        buildings_50m,
         buildings_100m,
         buildings_250m,
         buildings_500m,
@@ -2282,6 +2289,11 @@ def load_existing_enrichment(conn, property_data):
                 nearest_building_m
             )
 
+        if buildings_50m is not None:
+            property_data["buildings_50m"] = (
+                buildings_50m
+            )
+
         if buildings_100m is not None:
             property_data["buildings_100m"] = (
                 buildings_100m
@@ -2367,96 +2379,6 @@ def load_existing_enrichment(conn, property_data):
         property_data["severe_noise"] = bool(severe_noise)
 
     return property_data
-
-#
-# classify neighbour buildings
-#
-
-def classify_neighbours(buildings):
-
-    nearest = buildings.get(
-        "nearest_building_m"
-    )
-
-    b100 = buildings.get(
-        "buildings_100m",
-        0
-    )
-
-    b250 = buildings.get(
-        "buildings_250m",
-        0
-    )
-
-    # --------------------------------------------------------
-    # Echte Alleinlage
-    #
-    # Sehr restriktiv lassen:
-    # kein fremdes Gebäude innerhalb 100 m und
-    # höchstens sehr wenige innerhalb 250 m.
-    # --------------------------------------------------------
-
-    if (
-        b100 == 0
-        and b250 <= 5
-        and (
-            nearest is None
-            or nearest >= 100
-        )
-    ):
-        return "isolated"
-
-    # --------------------------------------------------------
-    # Sehr wenige unmittelbare Nachbarn
-    # --------------------------------------------------------
-
-    if (
-        b100 <= 10
-        and b250 <= 50
-    ):
-        return "few_neighbours"
-
-    # --------------------------------------------------------
-    # Lockere Bebauung
-    # --------------------------------------------------------
-
-    if (
-        b100 <= 30
-        and b250 <= 150
-    ):
-        return "loose_development"
-
-    # --------------------------------------------------------
-    # Dorfrand / größere Grundstücke /
-    # merklich lockerer als normale Ortslage
-    # --------------------------------------------------------
-
-    if (
-        b100 <= 60
-        and b250 <= 300
-    ):
-        return "village_edge"
-
-    # --------------------------------------------------------
-    # Normale Dorf-/Wohnlage
-    #
-    # Wichtig:
-    # Gebäudepolygone sind keine Haushalte.
-    # Garagen, Schuppen und Nebengebäude werden ebenfalls
-    # gezählt. Deshalb deutlich großzügiger als bisher.
-    # --------------------------------------------------------
-
-    if (
-        b100 <= 100
-        and b250 <= 500
-    ):
-        return "village"
-
-    # --------------------------------------------------------
-    # Wirklich dichte Bebauung
-    # --------------------------------------------------------
-
-    return "dense"
 
 def classify_buildability(property_data):
 
@@ -2867,6 +2789,10 @@ def enrich_property(conn, property_data):
                 buildings.get("nearest_building_m")
             )
 
+            property_data["buildings_50m"] = (
+                buildings.get("buildings_50m")
+            )
+
             property_data["buildings_100m"] = (
                 buildings.get("buildings_100m")
             )
@@ -2901,6 +2827,7 @@ def enrich_property(conn, property_data):
                 f"NEIGHBOURS: "
                 f"{property_data['neighbour_class']} | "
                 f"nearest={nearest_text} | "
+                f"50m={property_data.get('buildings_50m')} | "
                 f"100m={property_data.get('buildings_100m')} | "
                 f"250m={property_data.get('buildings_250m')} | "
                 f"500m={property_data.get('buildings_500m')}",
@@ -2934,6 +2861,7 @@ def enrich_property(conn, property_data):
             f"NEIGHBOURS: cached | "
             f"{property_data.get('neighbour_class')} | "
             f"nearest={nearest_text} | "
+            f"50m={property_data.get('buildings_50m')} | "
             f"100m={property_data.get('buildings_100m')} | "
             f"250m={property_data.get('buildings_250m')} | "
             f"500m={property_data.get('buildings_500m')}",
@@ -3111,6 +3039,9 @@ def save_property(conn, property_data, source_message_id):
         "nearest_building_m": property_data.get(
             "nearest_building_m"
         ),
+        "buildings_50m": property_data.get(
+            "buildings_50m"
+        ),
         "buildings_100m": property_data.get(
             "buildings_100m"
          ),
@@ -3250,6 +3181,7 @@ def save_property(conn, property_data, source_message_id):
                 water_score = :water_score,
                 neighbour_class = :neighbour_class,
                 nearest_building_m = :nearest_building_m,
+                buildings_50m = :buildings_50m,
                 buildings_100m = :buildings_100m,
                 buildings_250m = :buildings_250m,
                 buildings_500m = :buildings_500m,
@@ -3318,6 +3250,7 @@ def save_property(conn, property_data, source_message_id):
                 water_score,
                 neighbour_class,
                 nearest_building_m,
+                buildings_50m,
                 buildings_100m,
                 buildings_250m,
                 buildings_500m,
@@ -3377,6 +3310,7 @@ def save_property(conn, property_data, source_message_id):
                 :water_score,
                 :neighbour_class,
                 :nearest_building_m,
+                :buildings_50m,
                 :buildings_100m,
                 :buildings_250m,
                 :buildings_500m,

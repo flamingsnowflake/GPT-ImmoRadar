@@ -13,6 +13,10 @@ class ChanceTests(unittest.TestCase):
         self.config.start()
         self.addCleanup(self.config.stop)
         config = copy.deepcopy(CONFIG.score_config())
+        self.score_config = config
+        # Chance tests exercise the existing component ceiling itself.
+        # Distance weighting has separate coverage.
+        config['location_weighting']['enabled'] = False
         config['house']['hard_filters']['max_price'] = 300000
         house = config['house']['scoring']
         house['price']['condition_surcharge']['good'] = 15000
@@ -90,3 +94,21 @@ class ChanceTests(unittest.TestCase):
             result = best_case_result(p)
             self.assertIsNotNone(result['score'])
             self.assertIn('Ersatzwert', ' '.join(result['reasons']))
+
+    def test_locality_keeps_a_reachable_chance_with_distance_weighting(self):
+        self.score_config['location_weighting']['enabled'] = True
+        p = self.house()
+        p.update(
+            geo_precision='locality',
+            location='Plötzkau',
+            condition_class='unknown',
+            neighbour_class=None,
+            water_score=None,
+        )
+
+        result = best_case_result(p)
+
+        self.assertIsNotNone(result['score'])
+        self.assertEqual(result['proximity_score'], 100)
+        self.assertGreater(result['score'], 75)
+        self.assertTrue(qualifies_as_chance(p))

@@ -131,7 +131,8 @@ PUBLIC_DOCUMENT_REPLACEMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             "for the currently deployed system. The public snapshot is intentionally "
             "sanitized and may lag behind production features and scoring semantics. "
             "For the exact current behavior, start with `docs/current-state.md`, "
-            "`docs/scoring.md` and `docs/workflows.md`.\n\n",
+            "`docs/scoring.md`, `docs/workflows.md` and the complete "
+            "`docs/telegram.md` command reference.\n\n",
             "",
         ),
         (
@@ -195,7 +196,7 @@ PUBLIC_DOCUMENT_REPLACEMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "docs/installation.md": (
         (
-            "The private production repo archives the exact tested 1.3.1 userscript. "
+            "The private production repo archives the exact tested 1.3.3 userscript. "
             "Public exports generate a sanitized copy.",
             "Production deployments may archive the exact tested userscript privately "
             "for reproducibility. The public distribution contains a sanitized, "
@@ -227,7 +228,7 @@ PUBLIC_DOCUMENT_REPLACEMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             "- Public releases must not hardcode an operator-specific production endpoint.",
         ),
         (
-            "The exact 1.3.1 archive is retained in the private production repo for "
+            "The exact 1.3.3 archive is retained in the private production repo for "
             "reproducibility. A public export should generate a portable userscript "
             "with configurable endpoint(s), so forks do not accidentally send their "
             "property pages to another operator's server.",
@@ -259,6 +260,15 @@ PUBLIC_DOCUMENT_REPLACEMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             "This document describes the implementation state represented by this "
             "public release.",
         ),
+        (
+            "The previous search has ended without a move. Its runtime database was "
+            "archived and the live database was reset on 2026-09-17 so the "
+            "installation can begin a new search without carrying forward old "
+            "candidates, queue state or decisions.",
+            "This release captures the reusable application baseline after a completed "
+            "production search and operator reset. Runtime databases and prior search "
+            "state are not part of the public distribution.",
+        ),
     ),
     "docs/workflows.md": (
         (
@@ -276,6 +286,19 @@ PUBLIC_DOCUMENT_REPLACEMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             "repository becomes a portable product/source distribution.",
             "Operational history remains private while the public repository provides "
             "a portable product/source distribution.",
+        ),
+        (
+            "Keep the operator's reference point enabled only in the private "
+            "production configuration. The public example exposes the feature with "
+            "generic, disabled values.",
+            "Keep an operator's reference point in local configuration only. The "
+            "public example exposes the feature with generic, disabled values.",
+        ),
+        (
+            "Disable the Plötzkau location weighting because the search it represented "
+            "ended without a move.",
+            "Keep reference-location weighting disabled in the public baseline until "
+            "an operator deliberately configures a relevant reference point.",
         ),
     ),
 }

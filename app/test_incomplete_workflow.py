@@ -6,6 +6,7 @@ import unittest
 from incomplete_workflow import (
     condition_keyboard,
     condition_rows,
+    waiting_condition_rows,
     energy_keyboard,
     energy_rows,
     energy_text,
@@ -14,9 +15,14 @@ from incomplete_workflow import (
     geo_text,
     locality_keyboard,
     locality_rows,
+    waiting_locality_rows,
     locality_text,
     overview_keyboard,
     stats,
+)
+from lab_waitlist import (
+    clear_information_requested,
+    mark_information_requested,
 )
 
 
@@ -191,7 +197,69 @@ class IncompleteWorkflowTest(unittest.TestCase):
         ]
 
         self.assertIn("c:A:r:iwc", callbacks)
+        self.assertIn("iw_nope:ca:A", callbacks)
+        self.assertIn("iwq:add:c:A", callbacks)
         self.assertIn("iw:menu", callbacks)
+
+    def test_requested_condition_moves_to_waitlist(self):
+
+        mark_information_requested(
+            self.db_path,
+            "A",
+            "condition",
+        )
+
+        self.assertEqual(
+            condition_rows(self.db_path),
+            [],
+        )
+        self.assertEqual(
+            [
+                row["portal_id"]
+                for row in waiting_condition_rows(
+                    self.db_path
+                )
+            ],
+            ["A"],
+        )
+
+        current = stats(self.db_path)
+        self.assertEqual(current["Zustand"], 0)
+        self.assertEqual(current["Zustand angefragt"], 1)
+
+        callbacks = [
+            button["callback_data"]
+            for button_row in overview_keyboard(
+                self.db_path
+            )["inline_keyboard"]
+            for button in button_row
+        ]
+        self.assertIn(
+            "iw:wait_condition",
+            callbacks,
+        )
+
+        waiting_keyboard = condition_keyboard(
+            waiting_condition_rows(self.db_path)[0],
+            waiting=True,
+        )
+        waiting_callbacks = [
+            button["callback_data"]
+            for button_row in waiting_keyboard["inline_keyboard"]
+            for button in button_row
+        ]
+        self.assertIn("c:A:r:iwcw", waiting_callbacks)
+        self.assertIn("iwq:open:c:A", waiting_callbacks)
+
+        clear_information_requested(
+            self.db_path,
+            "A",
+            "condition",
+        )
+        self.assertEqual(
+            [row["portal_id"] for row in condition_rows(self.db_path)],
+            ["A"],
+        )
 
     def test_energy_queue_only_contains_missing_energy(self):
 
@@ -391,6 +459,14 @@ class IncompleteWorkflowTest(unittest.TestCase):
             "coords_set:C:house:iwl",
             callbacks,
         )
+        self.assertIn(
+            "iw_nope:la:C",
+            callbacks,
+        )
+        self.assertIn(
+            "iwq:add:l:C",
+            callbacks,
+        )
         self.assertEqual(
             stats(self.db_path)["Lage präzisieren"],
             2,
@@ -407,6 +483,49 @@ class IncompleteWorkflowTest(unittest.TestCase):
         self.assertIn(
             "iw:locality",
             overview_callbacks,
+        )
+
+        mark_information_requested(
+            self.db_path,
+            "C",
+            "locality",
+        )
+
+        self.assertEqual(
+            [row["portal_id"] for row in locality_rows(self.db_path)],
+            ["D"],
+        )
+        self.assertEqual(
+            [
+                row["portal_id"]
+                for row in waiting_locality_rows(
+                    self.db_path
+                )
+            ],
+            ["C"],
+        )
+
+        waiting_callbacks = [
+            button["callback_data"]
+            for button_row in locality_keyboard(
+                waiting_locality_rows(self.db_path)[0],
+                waiting=True,
+            )["inline_keyboard"]
+            for button in button_row
+        ]
+        self.assertIn(
+            "coords_set:C:house:iwlw",
+            waiting_callbacks,
+        )
+        self.assertIn(
+            "iwq:open:l:C",
+            waiting_callbacks,
+        )
+
+        clear_information_requested(
+            self.db_path,
+            "C",
+            "locality",
         )
 
         conn = sqlite3.connect(

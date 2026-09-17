@@ -40,6 +40,9 @@ A manually found property therefore does not need an alert e-mail to become a fi
 
 ## 2. Telegram `/incomplete` Labor
 
+For the complete list of Telegram commands, aliases and property-card actions,
+see [telegram.md](telegram.md).
+
 `/incomplete` is the production workbench for unresolved evidence, not a static report.
 
 It currently separates work into specialist paths including:
@@ -278,7 +281,7 @@ score are cleared before requests start. Module failures do not skip subsequent
 modules. Telegram reports each module's success or error; failures are also stored
 in `score_details.geo_errors`. A failed lookup remains unknown, never zero.
 
-Water/building coverage currently supports Sachsen-Anhalt and Niedersachsen.
+Water/building coverage currently supports Sachsen-Anhalt, Niedersachsen and Brandenburg.
 Mecklenburg-Vorpommern (including Lübesse) is explicitly reported as unsupported;
 repeating a scan cannot manufacture missing coverage. Noise uses separate sources.
 

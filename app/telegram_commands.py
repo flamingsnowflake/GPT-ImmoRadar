@@ -32,11 +32,15 @@ from geo_precision import (
     conservative_score,
     provisional_score_range,
 )
+from score_display import (
+    completed_score_lines,
+)
 from incomplete_workflow import (
     overview_text as incomplete_overview_text,
     overview_keyboard as incomplete_overview_keyboard,
     first_condition as incomplete_first_condition,
     condition_rows as incomplete_condition_rows,
+    waiting_condition_rows as incomplete_waiting_condition_rows,
     condition_text as incomplete_condition_text,
     condition_keyboard as incomplete_condition_keyboard,
     first_energy as incomplete_first_energy,
@@ -50,6 +54,7 @@ from incomplete_workflow import (
     locality_text as incomplete_locality_text,
     locality_keyboard as incomplete_locality_keyboard,
     locality_rows as incomplete_locality_rows,
+    waiting_locality_rows as incomplete_waiting_locality_rows,
 )
 from incomplete_energy import (
     energy_choice_label,
@@ -73,7 +78,13 @@ from lab_terminal import (
 from user_status import (
     ensure_user_status_table,
     get_user_status,
+    set_user_status,
     toggle_user_status,
+)
+from lab_waitlist import (
+    clear_information_requested,
+    mark_information_requested,
+    waiting_portal_ids,
 )
 from datetime import datetime, timezone, timedelta
 
@@ -123,6 +134,98 @@ PENDING_ENERGY_VALUES = {}
 PENDING_DOG_TAX = {}
 LOCALITY_LAB = LocalityLab()
 SKIPPED_LOCALITY_LAB = LOCALITY_LAB.skipped
+SKIPPED_WAITING_LABS = {
+    "condition": set(),
+    "locality": set(),
+}
+MAX_TELEGRAM_RESULT_ITEMS = 10
+
+
+def limited_result_page(rows, limit=MAX_TELEGRAM_RESULT_ITEMS):
+    rows = list(rows)
+    page_size = min(
+        max(int(limit), 0),
+        MAX_TELEGRAM_RESULT_ITEMS,
+    )
+    return rows[:page_size], len(rows)
+
+
+def limited_result_note(shown, total):
+    if total <= shown:
+        return None
+    return f"{shown} von {total} angezeigt"
+
+HELP_TEXT = (
+    "🏠 IMMOBILIEN-MONITOR · HILFE\n\n"
+
+    "📥 Objekt aufnehmen\n"
+    "Einfach einen Immowelt- oder ImmoScout24-Link senden. "
+    "Das Objekt wird importiert, geprüft und bewertet.\n\n"
+
+    "🔎 Suchen & Anzeigen\n"
+    "/find <Text> · Alias: /search\n"
+    "/property <ID> · vollständige Objektkarte\n"
+    "/inspect <ID> · Hauszustand prüfen\n"
+    "/merkliste · Alias: /favorites\n"
+    "Lange Ergebnislisten zeigen höchstens 10 Einträge.\n\n"
+
+    "🏆 Ranglisten\n"
+    "/top3house · /top10house\n"
+    "Häuser/Höfe, sortiert mit Plötzkau-Gewichtung.\n"
+    "/top3house_ohne · /top10house_ohne\n"
+    "Dieselben Kandidaten, sortiert ohne Plötzkau.\n"
+    "/top3land · beste Grundstücke\n"
+    "Chancen zeigen den bestmöglichen offenen Score. "
+    "Mit „📩 Lage angefragt“ kommen sie direkt auf die "
+    "Lage-Warteliste.\n\n"
+
+    "🧪 Labor & Wartelisten\n"
+    "/incomplete · offene Prüfungen bearbeiten:\n"
+    "Zustand, Energie, Adresse/Geo und Lage.\n"
+    "„Information angefragt“ parkt Zustand oder Lage auf "
+    "der jeweiligen Warteliste. Überspringen gilt nur für "
+    "den aktuellen Durchgang. „Kein Interesse“ blendet das "
+    "Objekt aus.\n\n"
+
+    "📍 Lage & Geodaten\n"
+    "/coords <ID> · aktuellen Standort anzeigen\n"
+    "/coords <ID> <Adresse>\n"
+    "/coords <ID> <Breite> <Länge>\n"
+    "/coords-auto <ID> · manuellen Standort entfernen und "
+    "automatisch neu prüfen\n\n"
+
+    "🔧 Manuelle Bewertung\n"
+    "/condition <ID> <WERT>\n"
+    "Werte: turnkey, good, maintained, "
+    "cosmetic_renovation, renovation_needed, "
+    "major_renovation, dilapidated, unknown\n"
+    "/buildability <ID> <WERT>\n"
+    "Werte: BUILDING_PERMIT, CONSTRUCTIONPLAN, "
+    "NEIGHBOURCONSTRUCTION, EXTERNALAREA, "
+    "NO_INFORMATION\n\n"
+
+    "🐕 Hundesteuer\n"
+    "/hundesteuer · Alias: /dogtax\n"
+    "Öffnet die Aufgaben für Top-10 und Merkliste. Alternativ "
+    "in den Hausdetails „Hundesteuer prüfen“ wählen, dann "
+    "Satzungslink senden oder PDF hochladen.\n"
+    "Expertenkorrektur:\n"
+    "/dogtax_link ID | AGS | Gemeinde | HTTPS-Quelle\n"
+    "/dogtax_set AGS | Gemeinde | Datum | staffel/alle | "
+    "Sätze | HTTPS-Quelle | Satzungsstand\n\n"
+
+    "🚫 Ausblenden & Aufräumen\n"
+    "/blacklist <Begriff> · Begriff dauerhaft sperren\n"
+    "/purge [Tage] · zuerst Vorschau, dann Bestätigung\n\n"
+
+    "🎛 Objektkarten\n"
+    "Details, Zustand, Koordinaten, Erklärung, Merken, "
+    "Offline und Kein Interesse sind direkt per Knopf "
+    "verfügbar. Offline/Kein Interesse und Lage angefragt "
+    "lassen sich wieder aufheben.\n\n"
+
+    "ℹ️ /help und /start zeigen diese Hilfe."
+)
 
 
 def refresh_active_locality_lab(prefix=None, check_terminal=True):
@@ -776,6 +879,37 @@ def property_action_keyboard(
         []
     )
 
+    if str(number) == "chance":
+
+        locality_waiting = (
+            str(portal_id)
+            in waiting_portal_ids(
+                DB_PATH,
+                "locality",
+            )
+        )
+
+        rows.append(
+            [
+                {
+                    "text": (
+                        "↩️ Lage wieder offen"
+                        if locality_waiting
+                        else "📩 Lage angefragt"
+                    ),
+                    "callback_data": (
+                        "cwl:"
+                        + (
+                            "o"
+                            if locality_waiting
+                            else "a"
+                        )
+                        + f":{portal_id}:{property_type}"
+                    ),
+                }
+            ]
+        )
+
     explanation_button = {
         "text": "🧮 Erklärung",
         "callback_data": (
@@ -847,15 +981,19 @@ def _score_summary_lines(property_data):
             "Lage nur auf Ortsebene bekannt",
         ]
 
-    score = property_data.get("score")
     rating = property_data.get("rating")
 
+    score_lines = completed_score_lines(
+        property_data
+    )
+
+    if not score_lines:
+        score_lines = [
+            "Score: noch offen"
+        ]
+
     return [
-        (
-            f"Score: {score}/100"
-            if score is not None
-            else "Score: noch offen"
-        ),
+        *score_lines,
         f"Status: {rating or '-'}",
     ]
 
@@ -1329,12 +1467,10 @@ def format_score_explanation(
 
     else:
 
-        score = details.get(
-            "score"
-        )
-
-        lines.append(
-            f"⭐ {score} / 100"
+        lines.extend(
+            completed_score_lines(
+                property_data
+            )
         )
 
     return "\n".join(
@@ -1936,7 +2072,8 @@ def listing_status(url):
 
 def format_property_card(
     p,
-    number=None
+    number=None,
+    weighted_first=False,
 ):
 
     lines = []
@@ -2058,9 +2195,27 @@ def format_property_card(
 
     if p.get("neighbour_class"):
 
+        neighbour_details = []
+
+        if p.get("nearest_building_m") is not None:
+            neighbour_details.append(
+                "nächstes Gebäude "
+                f"{float(p['nearest_building_m']):.0f} m"
+            )
+
+        if p.get("buildings_50m") is not None:
+            neighbour_details.append(
+                f"{int(p['buildings_50m'])} in 50 m"
+            )
+
         lines.append(
             f"🏘 Nachbarn: "
             f"{p['neighbour_class']}"
+            + (
+                " | " + " | ".join(neighbour_details)
+                if neighbour_details
+                else ""
+            )
         )
 
     # --------------------------------------------------------
@@ -2300,8 +2455,11 @@ def format_property_card(
 
         lines.append("")
 
-        lines.append(
-            f"⭐ Score: {p['score']}/100"
+        lines.extend(
+            completed_score_lines(
+                p,
+                weighted_first=weighted_first,
+            )
         )
 
         lines.append(
@@ -2330,6 +2488,11 @@ def format_property_card(
     return "\n".join(lines)
 
 def get_top_properties(property_type, limit=3):
+
+    limit = min(
+        max(int(limit), 0),
+        MAX_TELEGRAM_RESULT_ITEMS,
+    )
 
     rows = get_top_property_rows(
         property_type,
@@ -2407,7 +2570,7 @@ def get_top_properties(property_type, limit=3):
 
     return "\n".join(lines).strip()
 
-def find_properties(query, limit=8, with_keyboard=False):
+def find_properties(query, limit=10, with_keyboard=False):
 
     query = (
         query
@@ -2462,17 +2625,20 @@ def find_properties(query, limit=8, with_keyboard=False):
             is_ko ASC,
             score DESC,
             last_seen DESC
-        LIMIT ?
         """,
         (
             pattern,
             pattern,
             pattern,
-            limit,
         )
     ).fetchall()
 
     conn.close()
+
+    rows, total = limited_result_page(
+        rows,
+        limit,
+    )
 
     if not rows:
 
@@ -2484,8 +2650,17 @@ def find_properties(query, limit=8, with_keyboard=False):
 
     lines = [
         f"🔎 Suche: {query}",
-        ""
     ]
+
+    note = limited_result_note(
+        len(rows),
+        total,
+    )
+
+    if note:
+        lines.append(note)
+
+    lines.append("")
 
     for n, row in enumerate(rows, 1):
 
@@ -2535,9 +2710,11 @@ def find_properties(query, limit=8, with_keyboard=False):
             )
 
         elif p["score"] is not None:
+            lines.extend(
+                completed_score_lines(p)
+            )
             lines.append(
-                f"⭐ {p['score']}/100 | "
-                f"{p['rating']}"
+                f"📊 Status: {p['rating']}"
             )
 
         if p["is_ko"]:
@@ -2562,10 +2739,10 @@ def find_properties(query, limit=8, with_keyboard=False):
     keyboard = {
         "inline_keyboard": [
             [{
-                "text": f"🏠 Details {number}",
+                "text": f"➡️ Treffer {number}",
                 "callback_data": (
-                    f"property:{row['portal_id']}:"
-                    f"{row['property_type']}:find"
+                    f"back:{row['portal_id']}:"
+                    f"{row['property_type']}:new"
                 ),
             }]
             for number, row in enumerate(rows, 1)
@@ -2576,7 +2753,8 @@ def find_properties(query, limit=8, with_keyboard=False):
 
 def get_top_property_rows(
     property_type,
-    limit=3
+    limit=3,
+    ranking="weighted",
 ):
 
     conn = sqlite3.connect(DB_PATH)
@@ -2632,9 +2810,30 @@ def get_top_property_rows(
         for row in rows
     ]
 
+    def ranking_score(property_data):
+
+        if ranking == "base":
+
+            details = _score_details_dict(
+                property_data.get(
+                    "score_details"
+                )
+            )
+
+            base_score = details.get(
+                "base_score"
+            )
+
+            if base_score is not None:
+                return float(base_score)
+
+        return conservative_score(
+            property_data
+        )
+
     candidates.sort(
         key=lambda p: (
-            -conservative_score(p),
+            -ranking_score(p),
             -(p.get("plot_area") or 0),
             (
                 p.get("price")
@@ -2809,7 +3008,11 @@ def send_chances(property_type, shown_rows):
         send_message(
             f"👀 CHANCE #{number} · Best Case: {p['max_reachable_score']}/100\n\n"
             + format_property_card(p),
-            property_action_keyboard(p['portal_id'], p.get('property_type') or property_type, 'new'),
+            property_action_keyboard(
+                p['portal_id'],
+                p.get('property_type') or property_type,
+                'chance',
+            ),
         )
 
 
@@ -3106,10 +3309,12 @@ def inspect_property(portal_id):
         )
     )
 
-    lines.append(
-        "⭐ Score: "
-        f"{p.get('score')}"
-    )
+    score_lines = completed_score_lines(p)
+
+    if score_lines:
+        lines.extend(score_lines)
+    else:
+        lines.append("⭐ Score: noch offen")
 
     return "\n".join(lines)
 
@@ -3392,8 +3597,12 @@ def handle_message(message):
         if not tasks:
             send_message('✅ Für Top-10-Häuser und Merkliste sind keine Hundesteuer-Angaben offen.')
             return
+        tasks, total = limited_result_page(tasks)
         lines = ['🐕 Hundesteuer · offene Aufgaben', '',
                  'Wähle ein Objekt. Danach reicht ein Satzungslink oder eine hochgeladene PDF.']
+        note = limited_result_note(len(tasks), total)
+        if note:
+            lines.extend(['', note])
         buttons = []
         for number, task in enumerate(tasks, 1):
             if task['kind'] == 'municipality':
@@ -4005,7 +4214,7 @@ def handle_message(message):
             )
 
         if (
-            pending_coords.get("number") in ("iwg", "iwl")
+            pending_coords.get("number") in ("iwg", "iwl", "iwlw")
             and pending_coords.get("message_id")
         ):
 
@@ -4045,14 +4254,31 @@ def handle_message(message):
 
         if pending_coords.get(
             "number"
-        ) in ("iwg", "iwl"):
+        ) in ("iwg", "iwl", "iwlw"):
 
             locality_workflow = (
-                pending_coords.get("number") == "iwl"
+                pending_coords.get("number") in ("iwl", "iwlw")
+            )
+
+            waiting_workflow = (
+                pending_coords.get("number") == "iwlw"
             )
 
             if locality_workflow:
-                rows = LOCALITY_LAB.rows(incomplete_locality_rows(DB_PATH))
+                if waiting_workflow:
+                    clear_information_requested(
+                        DB_PATH,
+                        pending_coords["portal_id"],
+                        "locality",
+                    )
+                    rows = _lab_rows(
+                        "locality",
+                        True,
+                    )
+                else:
+                    rows = LOCALITY_LAB.rows(
+                        incomplete_locality_rows(DB_PATH)
+                    )
                 row, total = (rows[0] if rows else None), len(rows)
             else:
                 row, total = incomplete_first_geo(
@@ -4063,8 +4289,13 @@ def handle_message(message):
 
                 next_text = (
                     (
-                        "✅ Alle provisorischen Lagen "
-                        "bearbeitet.\n\n"
+                        (
+                            "✅ Keine weiteren Lagen "
+                            "auf der Warteliste.\n\n"
+                            if waiting_workflow
+                            else "✅ Alle provisorischen Lagen "
+                            "bearbeitet.\n\n"
+                        )
                         if locality_workflow
                         else "✅ Geo-Prüfung abgeschlossen.\n\n"
                     )
@@ -4086,9 +4317,11 @@ def handle_message(message):
                         row,
                         1,
                         total,
+                        waiting=waiting_workflow,
                     )
                     next_keyboard = incomplete_locality_keyboard(
-                        row
+                        row,
+                        waiting=waiting_workflow,
                     )
                 else:
                     next_text = incomplete_geo_text(
@@ -4130,7 +4363,7 @@ def handle_message(message):
                 next_keyboard,
             )
 
-            if locality_workflow:
+            if locality_workflow and not waiting_workflow:
                 LOCALITY_LAB.track((sent or {}).get('result', {}).get('message_id'), row)
 
             return
@@ -4410,8 +4643,22 @@ def handle_message(message):
 
             return
 
+        rows, total = limited_result_page(
+            rows
+        )
+
+        note = limited_result_note(
+            len(rows),
+            total,
+        )
+
         send_message(
-            f"⭐ MERKLISTE · {len(rows)} Objekt(e)"
+            f"⭐ MERKLISTE · {total} Objekt(e)"
+            + (
+                f"\n{note}"
+                if note
+                else ""
+            )
         )
 
         for number, p in enumerate(
@@ -4471,15 +4718,30 @@ def handle_message(message):
 
         return
 
-    if command == "/top3house":
+    if command in (
+        "/top3house",
+        "/top3house_ohne",
+    ):
+
+        ranking = (
+            "base"
+            if command.endswith("_ohne")
+            else "weighted"
+        )
 
         rows = get_top_property_rows(
             "house",
-            3
+            3,
+            ranking=ranking,
         )
 
         send_message(
-            f"🏆 TOP {len(rows)} HÄUSER / HÖFE"
+            f"🏆 TOP {len(rows)} HÄUSER / HÖFE\n"
+            + (
+                "Sortierung: Gesamtscore ohne Plötzkau"
+                if ranking == "base"
+                else "Sortierung: gewichteter Plötzkau-Score"
+            )
         )
 
 
@@ -4491,12 +4753,19 @@ def handle_message(message):
             send_message(
                 format_property_card(
                     p,
-                    number
+                    number,
+                    weighted_first=(
+                        ranking == "weighted"
+                    ),
                 ),
                 property_action_keyboard(
                     p["portal_id"],
                     "house",
-                    number
+                    (
+                        number
+                        if ranking == "weighted"
+                        else "new"
+                    )
                 )
             )
 
@@ -4506,15 +4775,30 @@ def handle_message(message):
         return
 
 
-    if command == "/top10house":
+    if command in (
+        "/top10house",
+        "/top10house_ohne",
+    ):
+
+        ranking = (
+            "base"
+            if command.endswith("_ohne")
+            else "weighted"
+        )
 
         rows = get_top_property_rows(
             "house",
-            10
+            10,
+            ranking=ranking,
         )
 
         send_message(
-            f"🏆 TOP {len(rows)} HÄUSER / HÖFE"
+            f"🏆 TOP {len(rows)} HÄUSER / HÖFE\n"
+            + (
+                "Sortierung: Gesamtscore ohne Plötzkau"
+                if ranking == "base"
+                else "Sortierung: gewichteter Plötzkau-Score"
+            )
         )
 
 
@@ -4526,7 +4810,10 @@ def handle_message(message):
             send_message(
                 format_property_card(
                     p,
-                    number
+                    number,
+                    weighted_first=(
+                        ranking == "weighted"
+                    ),
                 ),
                 property_action_keyboard(
                     p["portal_id"],
@@ -4628,63 +4915,7 @@ def handle_message(message):
     ):
 
         send_message(
-            "🏠 Immobilien-Monitor\n\n"
-
-            "🔎 Suchen & Anzeigen\n"
-            "/find <Suchtext>\n"
-            "/property <ID>\n"
-            "/inspect <ID>\n"
-            "/top3land\n"
-            "/top3house\n"
-            "/top10house\n"
-            "/merkliste\n"
-            "/incomplete\n\n"
-
-            "🧮 Bewertung\n"
-            "Ein Score wird erst angezeigt, wenn alle "
-            "relevanten Prüfungen abgeschlossen sind.\n"
-            "/incomplete zeigt Objekte mit noch "
-            "fehlenden Prüfungen zur Abarbeitung.\n"
-            "Der Button „🧮 Erklärung“ zeigt die "
-            "Einzelbewertung bzw. fehlende Prüfungen.\n\n"
-
-            "🚫 Blacklist & Aufräumen\n"
-            "/blacklist <Begriff>\n"
-            "/purge\n"
-            "/purge <Tage>\n\n"
-
-            "📍 Koordinaten\n"
-            "/coords <ID>\n"
-            "/coords <ID> <Breite> <Länge>\n"
-            "/coords-auto <ID>\n\n"
-
-            "🏗 Bebaubarkeit setzen\n"
-            "/buildability <ID> <WERT>\n\n"
-            "Werte:\n"
-            "BUILDING_PERMIT\n"
-            "CONSTRUCTIONPLAN\n"
-            "NEIGHBOURCONSTRUCTION\n"
-            "EXTERNALAREA\n"
-            "NO_INFORMATION\n\n"
-
-            "🔧 Hauszustand setzen\n"
-            "/condition <ID> <WERT>\n\n"
-            "Werte:\n"
-            "turnkey\n"
-            "good\n"
-            "maintained\n"
-            "cosmetic_renovation\n"
-            "renovation_needed\n"
-            "major_renovation\n"
-            "dilapidated\n"
-            "unknown\n\n"
-
-            "ℹ️ Hinweise\n"
-            "/purge zeigt zuerst eine Vorschau und "
-            "löscht erst nach Bestätigung.\n"
-            "Details, Zustand, Koordinaten, Merkliste "
-            "und Offline können auch über die Buttons "
-            "bedient werden."
+            HELP_TEXT
         )
 
         return
@@ -4724,6 +4955,139 @@ def _ack_callback(callback):
         telegram_api('answerCallbackQuery', {'callback_query_id': callback['id']})
     except Exception as exc:
         print(f'DOG TAX CALLBACK ACK ERROR: {exc}', flush=True)
+
+
+def _lab_rows(
+    kind,
+    waiting,
+):
+
+    if kind == "condition":
+        rows = (
+            incomplete_waiting_condition_rows(DB_PATH)
+            if waiting
+            else incomplete_condition_rows(DB_PATH)
+        )
+
+    else:
+        rows = (
+            incomplete_waiting_locality_rows(DB_PATH)
+            if waiting
+            else LOCALITY_LAB.rows(
+                incomplete_locality_rows(DB_PATH)
+            )
+        )
+
+    if waiting:
+        skipped = SKIPPED_WAITING_LABS[kind]
+        rows = [
+            row
+            for row in rows
+            if str(row.get("portal_id") or "") not in skipped
+        ]
+
+    return rows
+
+
+def _render_lab_queue(
+    message,
+    kind,
+    waiting,
+    prefix,
+):
+
+    rows = _lab_rows(
+        kind,
+        waiting,
+    )
+
+    row = rows[0] if rows else None
+
+    if waiting:
+        set_active_condition_lab(None, None)
+        LOCALITY_LAB.track(None, None)
+
+    elif kind == "condition":
+        set_active_condition_lab(
+            message.get("message_id"),
+            row,
+        )
+
+    else:
+        LOCALITY_LAB.track(
+            message.get("message_id"),
+            row,
+        )
+
+    if row is None:
+
+        if waiting:
+            finished = (
+                "✅ Keine weiteren Wartelistenfälle "
+                "in diesem Durchgang.\n\n"
+            )
+        elif kind == "condition":
+            finished = "🎉 Keine offenen Zustände mehr.\n\n"
+        else:
+            finished = (
+                "✅ Keine weiteren Lagen "
+                "in diesem Durchgang.\n\n"
+            )
+
+        text = (
+            prefix
+            + finished
+            + incomplete_overview_text(DB_PATH)
+        )
+
+        keyboard = incomplete_overview_keyboard(
+            DB_PATH
+        )
+
+    elif kind == "condition":
+
+        text = (
+            prefix
+            + incomplete_condition_text(
+                row,
+                1,
+                len(rows),
+                waiting=waiting,
+            )
+        )
+
+        keyboard = incomplete_condition_keyboard(
+            row,
+            waiting=waiting,
+        )
+
+    else:
+
+        text = (
+            prefix
+            + incomplete_locality_text(
+                row,
+                1,
+                len(rows),
+                waiting=waiting,
+            )
+        )
+
+        keyboard = incomplete_locality_keyboard(
+            row,
+            waiting=waiting,
+        )
+
+    telegram_api(
+        "editMessageText",
+        {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "message_id": message["message_id"],
+            "text": text,
+            "disable_web_page_preview": "true",
+            "reply_markup": json.dumps(keyboard),
+        }
+    )
 
 
 def handle_callback(callback):
@@ -4838,6 +5202,8 @@ def handle_callback(callback):
         "iw:energy",
         "iw:geo",
         "iw:locality",
+        "iw:wait_condition",
+        "iw:wait_locality",
     ):
 
         LOCALITY_LAB.reset()
@@ -4918,6 +5284,43 @@ def handle_callback(callback):
                     row
                 )
 
+        elif data == "iw:wait_condition":
+
+            SKIPPED_WAITING_LABS[
+                "condition"
+            ].clear()
+
+            rows = incomplete_waiting_condition_rows(
+                DB_PATH
+            )
+
+            row = rows[0] if rows else None
+
+            if row is None:
+
+                text = (
+                    "✅ Keine Zustände auf der Warteliste.\n\n"
+                    + incomplete_overview_text(DB_PATH)
+                )
+
+                keyboard = incomplete_overview_keyboard(
+                    DB_PATH
+                )
+
+            else:
+
+                text = incomplete_condition_text(
+                    row,
+                    1,
+                    len(rows),
+                    waiting=True,
+                )
+
+                keyboard = incomplete_condition_keyboard(
+                    row,
+                    waiting=True,
+                )
+
         elif data == "iw:geo":
 
             row, total = incomplete_first_geo(
@@ -4982,6 +5385,43 @@ def handle_callback(callback):
 
                 keyboard = incomplete_locality_keyboard(
                     row
+                )
+
+        elif data == "iw:wait_locality":
+
+            SKIPPED_WAITING_LABS[
+                "locality"
+            ].clear()
+
+            rows = incomplete_waiting_locality_rows(
+                DB_PATH
+            )
+
+            row = rows[0] if rows else None
+
+            if row is None:
+
+                text = (
+                    "✅ Keine Lagen auf der Warteliste.\n\n"
+                    + incomplete_overview_text(DB_PATH)
+                )
+
+                keyboard = incomplete_overview_keyboard(
+                    DB_PATH
+                )
+
+            else:
+
+                text = incomplete_locality_text(
+                    row,
+                    1,
+                    len(rows),
+                    waiting=True,
+                )
+
+                keyboard = incomplete_locality_keyboard(
+                    row,
+                    waiting=True,
                 )
 
         else:
@@ -5623,6 +6063,228 @@ def handle_callback(callback):
 
         return
 
+    if data.startswith("cwl:"):
+
+        try:
+            _, action, portal_id, property_type = data.split(
+                ":",
+                3,
+            )
+        except ValueError:
+            return
+
+        if action not in {"a", "o"}:
+            return
+
+        try:
+            if action == "a":
+                mark_information_requested(
+                    DB_PATH,
+                    portal_id,
+                    "locality",
+                )
+                callback_text = "📩 Lage angefragt"
+            else:
+                clear_information_requested(
+                    DB_PATH,
+                    portal_id,
+                    "locality",
+                )
+                callback_text = "↩️ Lage wieder offen"
+        except Exception as exc:
+            try:
+                telegram_api(
+                    "answerCallbackQuery",
+                    {
+                        "callback_query_id": callback["id"],
+                        "text": f"❌ {exc}",
+                        "show_alert": "true",
+                    }
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            telegram_api(
+                "answerCallbackQuery",
+                {
+                    "callback_query_id": callback["id"],
+                    "text": callback_text,
+                }
+            )
+        except Exception as exc:
+            print(
+                f"CHANCE WAITLIST ACK ERROR: {exc}",
+                flush=True,
+            )
+
+        telegram_api(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "message_id": message["message_id"],
+                "reply_markup": json.dumps(
+                    property_action_keyboard(
+                        portal_id,
+                        property_type,
+                        "chance",
+                    )
+                ),
+            }
+        )
+
+        return
+
+    if data.startswith("iw_nope:"):
+
+        try:
+            _, mode, portal_id = data.split(
+                ":",
+                2,
+            )
+        except ValueError:
+            return
+
+        kind = (
+            "condition"
+            if mode.startswith("c")
+            else "locality"
+        )
+
+        waiting = mode.endswith("w")
+
+        try:
+            set_user_status(
+                DB_PATH,
+                portal_id,
+                "not_interested",
+            )
+            clear_information_requested(
+                DB_PATH,
+                portal_id,
+            )
+        except Exception as exc:
+            try:
+                telegram_api(
+                    "answerCallbackQuery",
+                    {
+                        "callback_query_id": callback["id"],
+                        "text": f"❌ {exc}",
+                        "show_alert": "true",
+                    }
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            telegram_api(
+                "answerCallbackQuery",
+                {
+                    "callback_query_id": callback["id"],
+                    "text": "🙈 Kein Interesse gespeichert",
+                }
+            )
+        except Exception as exc:
+            print(
+                f"LAB NO-INTEREST ACK ERROR: {exc}",
+                flush=True,
+            )
+
+        _render_lab_queue(
+            message,
+            kind,
+            waiting,
+            "🙈 Kein Interesse gespeichert.\n\n",
+        )
+
+        return
+
+    if data.startswith("iwq:"):
+
+        try:
+            _, action, kind_code, portal_id = data.split(
+                ":",
+                3,
+            )
+        except ValueError:
+            return
+
+        kind = {
+            "c": "condition",
+            "l": "locality",
+        }.get(kind_code)
+
+        if kind is None or action not in {
+            "add",
+            "open",
+            "skip",
+        }:
+            return
+
+        try:
+            if action == "add":
+                mark_information_requested(
+                    DB_PATH,
+                    portal_id,
+                    kind,
+                )
+                prefix = "📩 Information angefragt.\n\n"
+                waiting = False
+
+            elif action == "open":
+                clear_information_requested(
+                    DB_PATH,
+                    portal_id,
+                    kind,
+                )
+                prefix = "↩️ Wieder als offen markiert.\n\n"
+                waiting = True
+
+            else:
+                SKIPPED_WAITING_LABS[kind].add(
+                    str(portal_id)
+                )
+                prefix = "⏭ Wartelistenfall übersprungen.\n\n"
+                waiting = True
+
+        except Exception as exc:
+            try:
+                telegram_api(
+                    "answerCallbackQuery",
+                    {
+                        "callback_query_id": callback["id"],
+                        "text": f"❌ {exc}",
+                        "show_alert": "true",
+                    }
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            telegram_api(
+                "answerCallbackQuery",
+                {
+                    "callback_query_id": callback["id"],
+                }
+            )
+        except Exception as exc:
+            print(
+                f"LAB WAITLIST ACK ERROR: {exc}",
+                flush=True,
+            )
+
+        _render_lab_queue(
+            message,
+            kind,
+            waiting,
+            prefix,
+        )
+
+        return
+
     if data.startswith("iwl_skip:"):
 
         try:
@@ -6138,6 +6800,15 @@ def handle_callback(callback):
                 flush=True
             )
 
+        if number in ("iwl", "iwlw"):
+            _render_lab_queue(
+                message,
+                "locality",
+                number == "iwlw",
+                "↩️ Eingabe abgebrochen.\n\n",
+            )
+            return
+
         telegram_api(
             "editMessageReplyMarkup",
             {
@@ -6561,66 +7232,27 @@ def handle_callback(callback):
             condition_class
         )
 
-        if number == "iwc":
+        if number in ("iwc", "iwcw"):
 
-            row, total = incomplete_first_condition(
-                DB_PATH
+            waiting = number == "iwcw"
+
+            if waiting:
+                clear_information_requested(
+                    DB_PATH,
+                    portal_id,
+                    "condition",
+                )
+
+            label = CONDITION_MAP.get(
+                condition_class,
+                condition_class,
             )
 
-            set_active_condition_lab(
-                message.get("message_id"),
-                row,
-            )
-
-            if row is None:
-
-                text = (
-                    "✅ Zustand gespeichert.\n\n"
-                    "🎉 Keine offenen Zustände mehr.\n\n"
-                    + incomplete_overview_text(
-                        DB_PATH
-                    )
-                )
-
-                keyboard = incomplete_overview_keyboard(
-                    DB_PATH
-                )
-
-            else:
-
-                label = CONDITION_MAP.get(
-                    condition_class,
-                    condition_class,
-                )
-
-                text = (
-                    f"✅ {label} gespeichert\n\n"
-                    + incomplete_condition_text(
-                        row,
-                        1,
-                        total,
-                    )
-                )
-
-                keyboard = incomplete_condition_keyboard(
-                    row
-                )
-
-            telegram_api(
-                "editMessageText",
-                {
-                    "chat_id":
-                        TELEGRAM_CHAT_ID,
-                    "message_id":
-                        message["message_id"],
-                    "text": text,
-                    "disable_web_page_preview":
-                        "true",
-                    "reply_markup":
-                        json.dumps(
-                            keyboard
-                        ),
-                }
+            _render_lab_queue(
+                message,
+                "condition",
+                waiting,
+                f"✅ {label} gespeichert\n\n",
             )
 
             return
@@ -6827,8 +7459,9 @@ def main():
                 "allowed_updates":
                     json.dumps(
                         [
-                             "message",
-                             "callback_query"
+                            "message",
+                            "edited_message",
+                            "callback_query",
                         ]
                     )
             }
@@ -6851,8 +7484,9 @@ def main():
                     + 1
                 )
 
-                message = update.get(
-                    "message"
+                message = (
+                    update.get("message")
+                    or update.get("edited_message")
                 )
 
                 if message:

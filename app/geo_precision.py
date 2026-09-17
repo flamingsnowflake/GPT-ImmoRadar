@@ -25,6 +25,7 @@ GEO_DERIVED_FIELDS = (
     "water_score",
     "neighbour_class",
     "nearest_building_m",
+    "buildings_50m",
     "buildings_100m",
     "buildings_250m",
     "buildings_500m",

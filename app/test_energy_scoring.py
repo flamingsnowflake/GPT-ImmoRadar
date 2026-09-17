@@ -1,5 +1,6 @@
 import unittest
 
+from config_loader import CONFIG
 from scoring import (
     energy_class_from_value,
     energy_score_adjustment,
@@ -22,6 +23,17 @@ ENERGY_CONFIG = {
 
 
 class EnergyScoringTest(unittest.TestCase):
+
+    def test_production_config_strongly_rewards_positive_labels(self):
+        adjustments = (
+            CONFIG.score_config()["house"]["scoring"]
+            ["energy"]["class_adjustments"]
+        )
+
+        self.assertEqual(
+            {key: adjustments[key] for key in ("C", "B", "A", "A+")},
+            {"C": 1, "B": 3, "A": 5, "A+": 8},
+        )
 
     def test_value_to_class_boundaries(self):
         self.assertEqual(

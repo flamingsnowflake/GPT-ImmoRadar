@@ -1,6 +1,6 @@
 # Scoring, completeness and evidence states
 
-Last updated: 2026-09-02
+Last updated: 2026-09-17
 
 This document describes the **reference scoring model** shipped with this release. The implementation is `app/scoring.py` together with `config/score.yaml`.
 
@@ -62,7 +62,23 @@ Living area          5
 Base               100
 ```
 
-Energy is an adjustment on top of that base before the final score is clamped to the configured range. Broker-free offers can also receive a scoring advantage.
+Energy is an adjustment on top of that base. Exceptional properties may therefore exceed 100, with a hard safety ceiling of 110. Broker-free offers can also receive a scoring advantage.
+
+## Optional distance weighting
+
+Distance weighting is currently disabled after the production search reset. When enabled with a deliberately chosen reference location, every completed house/farm or land score combines the existing score with proximity to that point:
+
+```text
+proximity score = max(0, 100 × (1 - distance_km / 100))
+final score     = round(0.80 × existing score
+                        + 0.20 × proximity score)
+```
+
+The proximity score is 100 at the configured reference point, falls linearly with distance, and is 0 at and beyond the configured maximum distance. With the current optional 80/20 model it contributes at most 20 final points. Freilage is already part of the neighbour component in the independent base score and receives no separate bonus in the location formula. Distance uses the property's exact or manually confirmed coordinates and a great-circle calculation. The result details retain the existing score, distance, proximity score, weights and final score so the calculation remains explainable.
+
+The independent score and an enabled weighted score both have a safety ceiling of 110. With the current positive energy adjustments, a brokered house can reach 108. An otherwise perfect broker-free offer also receives its established transaction-cost bonus and reaches the 110 ceiling; at maximum reference-point proximity this produces a weighted score of 108. Scores above 100 deliberately mark an exceptional property rather than being silently clipped.
+
+When exact coordinates are unresolved, the scorer does not publish a false exact total. Locality-only properties continue through the provisional range workflow, with the distance contribution bounded between 0 and 100 until the address or point is known.
 
 ### Price + condition
 
@@ -105,12 +121,11 @@ Current house plot points:
 
 ```text
 >= 5,000 m²   20
->= 3,000 m²   18
->= 2,000 m²   16
->= 1,500 m²   14
->= 1,000 m²   11
->=   750 m²    7
->=   500 m²    3
+>= 3,000 m²   15
+>= 2,000 m²   10
+>= 1,500 m²    7
+>= 1,000 m²    3
+<  1,000 m²   KO
 ```
 
 ### Neighbours / isolation
@@ -119,12 +134,14 @@ Current house values:
 
 ```text
 isolated             25
-few_neighbours       23
-loose_development    20
-village_edge         17
-village              12
-dense                 7
+few_neighbours       20
+loose_development    12
+village_edge          7
+village               3
+dense                 0
 ```
+
+`isolated` requires the nearest foreign building polygon to be at least 100 m away. `few_neighbours` requires no more than two foreign building polygons within 50 m. These classes receive their preference entirely within the ordinary neighbour component above; there is no additional Freilage category or bonus. Water and quiet remain unchanged, and an enabled reference-location model contributes its configured proximity share separately.
 
 For houses/farms the category is unresolved if `neighbour_checked_at` is missing or the neighbour class is still unknown. A low numeric result is not the same thing as an untested result.
 
@@ -200,9 +217,9 @@ The enrichment water score uses a 0..20 source scale. Houses/farms scale that va
 Current class adjustments:
 
 ```text
-A+  +3
-A   +2
-B   +1
+A+  +8
+A   +5
+B   +3
 C   +1
 D    0
 E   -1
@@ -280,16 +297,16 @@ Land has its own base model and stricter location/noise policy:
 
 ```text
 Price               30
-Plot                25
+Plot                20
 Water               20
-Neighbours          15
+Neighbours          20
 Primary residence    5
 Buildability         5
 ----------------------
 Base               100
 ```
 
-The current hard policy also requires at least 500 m², forbids holiday-only areas, requires normal residential building permission, and treats severe noise as a hard exclusion.
+The current hard policy also requires at least 1,000 m², forbids holiday-only areas, requires normal residential building permission, and treats severe noise as a hard exclusion.
 
 ## Source of truth
 

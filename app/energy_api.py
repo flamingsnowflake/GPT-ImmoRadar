@@ -15,6 +15,7 @@ from energy_data import (
 )
 from property_types import is_house_type
 from scoring import score_house
+from score_display import completed_score_lines
 
 
 HOST = "0.0.0.0"
@@ -344,17 +345,23 @@ class Handler(BaseHTTPRequestHandler):
 
             new_score = score_result["score"]
 
-            if old_score is None:
-                score_text = (
-                    f"⭐ Score: {new_score}/100 | "
-                    f"{score_result['rating']}"
+            score_lines = completed_score_lines(
+                score_result
+            )
+            score_lines.append(
+                f"📊 Status: {score_result['rating']}"
+            )
+
+            if (
+                old_score is not None
+                and old_score != new_score
+            ):
+                score_lines.append(
+                    "Vorheriger gewichteter Score: "
+                    f"{old_score}/100"
                 )
-            else:
-                score_text = (
-                    f"⭐ Score: {old_score} → "
-                    f"{new_score}/100 | "
-                    f"{score_result['rating']}"
-                )
+
+            score_text = "\n".join(score_lines)
 
             send_telegram(
                 "⚡ Energiedaten aktualisiert\n\n"

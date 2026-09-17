@@ -80,7 +80,7 @@ The Nominatim User-Agent must use a configurable contact string rather than a pe
 
 ## Tampermonkey
 
-The private repo preserves the exact tested production 1.3.1 build.
+The private repo preserves the exact tested production 1.3.3 build.
 
 The public userscript must **not** default to the production server. It should require/configure the user's own endpoints and tokens. A safe public default is an invalid/example URL or an explicit first-run configuration prompt.
 

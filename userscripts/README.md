@@ -6,7 +6,7 @@ The browser component is a Tampermonkey userscript used on supported real-estate
 
 ```text
 Immobilienmonitor – Browser & Energie
-version 1.3.1
+version 1.3.3
 ```
 
 Readable source:
@@ -18,24 +18,24 @@ immobilien-energy.user.js
 Exact generated archive:
 
 ```text
-archive/Immobilienmonitor-Browser-Energie-1.3.1.zip
+archive/Immobilienmonitor-Browser-Energie-1.3.3.zip
 ```
 
 The readable source and the `.user.js` inside the archive are byte-identical. Git blob SHA of the production source:
 
 ```text
-8f579d64f18e0d01f7bf1d980aad359a570f5053
+abb5d2465c56008937fc359e0b3ef571381977c1
 ```
 
 SHA-256 of the `.user.js`:
 
 ```text
-3c4bb32f5b00229c12713ae8f51afd9684eb7fd3eea2749f8823f4e92dfd1b5c
+3167828ae166803138c709a1a229dba153c5837fc4ae9cb37cc6c8d5cbeb064d
 ```
 
-The previous v0.2.0 file at this path predated the unified browser enrichment architecture and has been replaced by the exact production 1.3.1 source.
+The previous v0.2.0 file at this path predated the unified browser enrichment architecture and has been replaced by the current production source.
 
-## What 1.3.1 does
+## What 1.3.3 does
 
 - supports ImmoScout24 and Immowelt exposé routes;
 - notices SPA route changes;
@@ -47,6 +47,7 @@ The previous v0.2.0 file at this path predated the unified browser enrichment ar
 - sends browser evidence to `/browser-enrich`;
 - shows enrichment status in a small in-page panel;
 - retains a separate manual Energy fallback.
+- keeps the Immowelt panel above the native mobile contact bar, including the device safe area.
 
 See `../docs/browser-enrichment.md`.
 
