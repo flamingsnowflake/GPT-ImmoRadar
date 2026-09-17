@@ -155,6 +155,38 @@ def limited_result_note(shown, total):
         return None
     return f"{shown} von {total} angezeigt"
 
+
+def _location_ranking_config():
+    config = CONFIG.score_config().get(
+        "location_weighting", {}
+    )
+    return (
+        bool(config.get("enabled")),
+        str(config.get("reference_name") or "Referenzort"),
+    )
+
+
+def _house_ranking_help():
+    enabled, reference = _location_ranking_config()
+    if not enabled:
+        return (
+            "Häuser/Höfe, sortiert nach Gesamtscore.\n"
+            "Die _ohne-Kommandos liefern derzeit dieselbe Sortierung.\n"
+        )
+    return (
+        f"Häuser/Höfe, sortiert mit {reference}-Gewichtung.\n"
+        f"Dieselben Kandidaten ohne {reference}:\n"
+    )
+
+
+def _house_ranking_label(ranking):
+    enabled, reference = _location_ranking_config()
+    if not enabled:
+        return "Sortierung: Gesamtscore"
+    if ranking == "base":
+        return f"Sortierung: Gesamtscore ohne {reference}"
+    return f"Sortierung: gewichteter {reference}-Score"
+
 HELP_TEXT = (
     "🏠 IMMOBILIEN-MONITOR · HILFE\n\n"
 
@@ -171,9 +203,8 @@ HELP_TEXT = (
 
     "🏆 Ranglisten\n"
     "/top3house · /top10house\n"
-    "Häuser/Höfe, sortiert mit Plötzkau-Gewichtung.\n"
-    "/top3house_ohne · /top10house_ohne\n"
-    "Dieselben Kandidaten, sortiert ohne Plötzkau.\n"
+    + _house_ranking_help()
+    + "/top3house_ohne · /top10house_ohne\n"
     "/top3land · beste Grundstücke\n"
     "Chancen zeigen den bestmöglichen offenen Score. "
     "Mit „📩 Lage angefragt“ kommen sie direkt auf die "
@@ -4737,11 +4768,7 @@ def handle_message(message):
 
         send_message(
             f"🏆 TOP {len(rows)} HÄUSER / HÖFE\n"
-            + (
-                "Sortierung: Gesamtscore ohne Plötzkau"
-                if ranking == "base"
-                else "Sortierung: gewichteter Plötzkau-Score"
-            )
+            + _house_ranking_label(ranking)
         )
 
 
@@ -4794,11 +4821,7 @@ def handle_message(message):
 
         send_message(
             f"🏆 TOP {len(rows)} HÄUSER / HÖFE\n"
-            + (
-                "Sortierung: Gesamtscore ohne Plötzkau"
-                if ranking == "base"
-                else "Sortierung: gewichteter Plötzkau-Score"
-            )
+            + _house_ranking_label(ranking)
         )
 
 
