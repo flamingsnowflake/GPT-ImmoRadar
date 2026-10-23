@@ -1,62 +1,40 @@
-# Browser userscript
+# Browser userscript 1.3.7
 
-The browser component is a Tampermonkey userscript used on supported real-estate exposé pages.
+Install [Immobilienmonitor – Browser & Energie](https://raw.githubusercontent.com/flamingsnowflake/GPT-ImmoRadar/main/userscripts/immobilienmonitor-browser-energy.user.js) in Tampermonkey or Violentmonkey. The legacy filename `immobilien-energy.user.js` contains the same release.
 
-## Canonical private production build
+## One-time setup
 
-```text
-Immobilienmonitor – Browser & Energie
-version 1.3.3
+1. Open an ImmoScout24 or Immowelt exposé.
+2. Click **⚙ → S** and enter your monitor's HTTPS base address, including a custom port if needed, for example `https://monitor.example.org:8443`. Do not include `/browser-enrich` or another path. You can also use **Monitor-Server einstellen** in the userscript manager's menu.
+3. Click **⚙ → B** to enter your browser-enrichment token. Set **⚙ → E** for the separate Energy API token, if used.
+4. Allow connections to your chosen server when the userscript manager asks.
+
+Server address and tokens are stored in the userscript manager's storage. No listing data or tokens are sent until a valid server address is configured. The public installer has no production server or token embedded. Changing to a different server asks for confirmation and clears both tokens to prevent sending the old credentials to that server.
+
+The `@connect *` permission accommodates self-hosted servers; the script sends requests only to the HTTPS origin selected in its settings.
+
+## Updates
+
+The script checks its GitHub `.meta.js` update URL and downloads releases from the canonical `.user.js` URL. Enable automatic script updates in your userscript manager, or use its **Check for updates** action. Future releases retain the same name, namespace, server storage key and token storage keys.
+
+Updates of the existing public version preserve its identity. A manually installed private deployment may use a different namespace: disable that old copy before installing this public version, and configure its server and tokens once. Keep only one copy enabled on a page.
+
+## Browser support and workflow
+
+- ImmoScout24 and Immowelt root domains and subdomains.
+- Browser enrichment, SPA navigation detection, CAPTCHA pause and the manual Energy fallback.
+- Firefox/Fennec content-mode injection and mobile panel placement above portal controls.
+- Tokens are requested through the settings button rather than timer-triggered prompts.
+- Contributors use only their own token and the scope granted by their monitor administrator.
+
+On Android, reopen the browser after replacing an old release. If using private browsing, allow the userscript manager in private tabs.
+
+## Validation
+
+Run the configuration and update-metadata regression tests with Node.js:
+
+```bash
+node --test userscripts/tests/configuration.test.cjs
 ```
 
-Readable source:
-
-```text
-immobilien-energy.user.js
-```
-
-Exact generated archive:
-
-```text
-archive/Immobilienmonitor-Browser-Energie-1.3.3.zip
-```
-
-The readable source and the `.user.js` inside the archive are byte-identical. Git blob SHA of the production source:
-
-```text
-abb5d2465c56008937fc359e0b3ef571381977c1
-```
-
-SHA-256 of the `.user.js`:
-
-```text
-3167828ae166803138c709a1a229dba153c5837fc4ae9cb37cc6c8d5cbeb064d
-```
-
-The previous v0.2.0 file at this path predated the unified browser enrichment architecture and has been replaced by the current production source.
-
-## What 1.3.3 does
-
-- supports ImmoScout24 and Immowelt exposé routes;
-- notices SPA route changes;
-- waits for rendered page content;
-- pauses on CAPTCHA/security pages;
-- expands Immowelt “Mehr Infos” for browser-only energy information;
-- closes only an Immowelt detail dialog that the script itself opened;
-- extracts DOM-only ImmoScout24 energy-class hints;
-- sends browser evidence to `/browser-enrich`;
-- shows enrichment status in a small in-page panel;
-- retains a separate manual Energy fallback.
-- keeps the Immowelt panel above the native mobile contact bar, including the device safe area.
-
-See `../docs/browser-enrichment.md`.
-
-## Tokens
-
-The source contains token **storage keys**, not production token values. Real tokens are entered at runtime and held in Tampermonkey userscript storage.
-
-## Public release
-
-The exact private production build contains deployment-specific endpoint hostnames. Do not publish/use it as the default public installer without sanitizing/configuring those endpoints.
-
-`tools/export_public_snapshot.py` generates the public snapshot from this canonical source and neutralizes the deployment endpoint. See `../docs/public-release.md`.
+Historical ZIP files under `archive/` are older releases. Use the canonical GitHub installer for current updates.

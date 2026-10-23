@@ -1,30 +1,86 @@
 // ==UserScript==
 // @name         Immobilienmonitor – Browser & Energie
 // @namespace    https://example.invalid/immoradar/
-// @version      1.3.3
+// @version      1.3.7
 // @description  Sendet Browserdaten inklusive Energie-DOM-Hinweisen automatisch an den Immobilienmonitor; manueller Energieversand bleibt als Fallback.
-// @match        https://www.immobilienscout24.de/expose/*
-// @match        https://www.immowelt.de/expose/*
+// @match        https://immobilienscout24.de/expose/*
+// @match        https://*.immobilienscout24.de/expose/*
+// @match        https://immowelt.de/expose/*
+// @match        https://*.immowelt.de/expose/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @connect      monitor.example.invalid
+// @grant        GM_registerMenuCommand
+// @connect      *
+// @inject-into  content
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/flamingsnowflake/GPT-ImmoRadar/main/userscripts/immobilienmonitor-browser-energy.meta.js
+// @downloadURL  https://raw.githubusercontent.com/flamingsnowflake/GPT-ImmoRadar/main/userscripts/immobilienmonitor-browser-energy.user.js
+// @homepageURL  https://github.com/flamingsnowflake/GPT-ImmoRadar
+// @supportURL   https://github.com/flamingsnowflake/GPT-ImmoRadar/issues
 // ==/UserScript==
 
 (function () {
     "use strict";
 
-    const API_URL = "https://monitor.example.invalid/immobilien-energy/energy";
     const TOKEN_KEY = "immobilien_energy_api_token";
 
-    const BROWSER_API_URL =
-        "https://monitor.example.invalid/browser-enrich";
 
     const BROWSER_TOKEN_KEY =
         "immobilien_browser_enrich_token";
 
     const BROWSER_MAX_ATTEMPTS = 3;
+    const SERVER_BASE_KEY = "immobilien_monitor_server_base_url";
+
+    function normalizeServerBase(value) {
+        try {
+            const url = new URL(String(value || "").trim());
+            if (
+                url.protocol !== "https:"
+                || url.username || url.password
+                || url.search || url.hash
+                || (url.pathname && url.pathname !== "/")
+                || url.hostname.endsWith(".invalid")
+            ) {
+                return "";
+            }
+            return url.origin;
+        } catch (_error) {
+            return "";
+        }
+    }
+
+    function getServerBase() {
+        return normalizeServerBase(GM_getValue(SERVER_BASE_KEY, ""));
+    }
+
+    function serverEndpoint(path) {
+        const base = getServerBase();
+        return base ? base + path : "";
+    }
+
+    function configureServer() {
+        const current = getServerBase();
+        const input = window.prompt(
+            "HTTPS-Adresse deines Monitors inklusive Port, ohne Pfad "
+            + "(z. B. https://monitor.example.org:8443):",
+            current
+        );
+        if (input === null) return;
+        const base = normalizeServerBase(input);
+        if (!base) {
+            window.alert("Bitte eine gültige HTTPS-Serveradresse ohne Pfad, Zugangsdaten oder URL-Parameter eingeben.");
+            return;
+        }
+        if (current && current !== base) {
+            if (!window.confirm("Server wechseln? Die gespeicherten Tokens werden dabei gelöscht, damit sie nicht an den anderen Server gesendet werden.")) return;
+            GM_setValue(TOKEN_KEY, "");
+            GM_setValue(BROWSER_TOKEN_KEY, "");
+        }
+        GM_setValue(SERVER_BASE_KEY, base);
+        startBrowserCheckCycle(1500);
+        window.alert("Server gespeichert. Falls noch kein Token gesetzt ist: ⚙ → B beziehungsweise E.");
+    }
 
     let browserFinished = false;
     let browserSending = false;
@@ -1069,6 +1125,8 @@
     }
 
     function sendToMonitor(info, data) {
+        const apiUrl = serverEndpoint("/immobilien-energy/energy");
+        if (!apiUrl) return Promise.reject(new Error("Server fehlt – bitte über ⚙ → S einstellen."));
         const token = getToken();
 
         if (!token) {
@@ -1080,7 +1138,7 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: "POST",
-                url: API_URL,
+                url: apiUrl,
                 headers: {
                     Authorization: `Bearer ${token}`,
                     "Content-Type": "application/json",
@@ -1121,7 +1179,8 @@
 
                     reject(
                         new Error(
-                            body?.error
+                            body?.message
+                                || body?.error
                                 || `HTTP ${response.status}`
                         )
                     );
@@ -1148,7 +1207,15 @@
             )
         );
 
-        if (!token) {
+        // Firefox/Violentmonkey on Android may suppress a
+        // prompt opened by a timer without a user gesture.
+        // The visible settings button remains reliable.
+        if (
+            !token
+            && !/Android/i.test(
+                navigator.userAgent || ""
+            )
+        ) {
             token = clean(
                 window.prompt(
                     "BROWSER_ENRICH_TOKEN eingeben. "
@@ -1181,8 +1248,12 @@
                 token
             );
 
+            browserFinished = false;
+            startBrowserCheckCycle();
+
             window.alert(
-                "Browser-Enrichment-Token gespeichert."
+                "Browser-Enrichment-Token gespeichert. "
+                + "Die Seite wird jetzt erneut geprüft."
             );
         }
     }
@@ -1190,10 +1261,11 @@
     function resetTokenMenu() {
         const choice = clean(
             window.prompt(
-                "Welchen Token ändern?\n"
-                + "E = Energie-API\n"
-                + "B = Browser-Enrichment",
-                "E"
+                "Einstellungen:\n"
+                + "S = Serveradresse\n"
+                + "E = Energie-API-Token\n"
+                + "B = Browser-Enrichment-Token",
+                getServerBase() ? "B" : "S"
             )
         );
 
@@ -1201,12 +1273,15 @@
             return;
         }
 
+        if (choice.toLowerCase() === "s") {
+            configureServer();
+            return;
+        }
         if (choice.toLowerCase() === "b") {
             resetBrowserToken();
             return;
         }
-
-        resetToken();
+        if (choice.toLowerCase() === "e") resetToken();
     }
 
     function getJsonLd() {
@@ -1368,13 +1443,19 @@
             return;
         }
 
+        const browserApiUrl = serverEndpoint("/browser-enrich");
+        if (!browserApiUrl) {
+            finishBrowserEnrichment();
+            showBrowserStatus("⚠ Monitor: Server fehlt – ⚙ → S", "warning");
+            return;
+        }
         const token = getBrowserToken();
 
         if (!token) {
             finishBrowserEnrichment();
 
             showBrowserStatus(
-                "⚠ Monitor: Browser-Token fehlt",
+                "⚠ Monitor: Browser-Token fehlt – ⚙ tippen",
                 "warning"
             );
 
@@ -1395,7 +1476,7 @@
 
         GM_xmlhttpRequest({
             method: "POST",
-            url: BROWSER_API_URL,
+            url: browserApiUrl,
             headers: {
                 "Content-Type":
                     "application/json",
@@ -1408,6 +1489,7 @@
             timeout: 15000,
 
             onload(response) {
+                if (serverEndpoint("/browser-enrich") !== browserApiUrl) return;
                 if (!payloadMatchesCurrentObject(payload)) {
                     return;
                 }
@@ -1431,6 +1513,14 @@
                     && result.ok
                 ) {
                     finishBrowserEnrichment();
+
+                    if (result.database_status === "owner_review_required") {
+                        showBrowserStatus(
+                            "⚠ Inserat nicht verfügbar – Prüfung durch Owner nötig",
+                            "warning"
+                        );
+                        return;
+                    }
 
                     if (result.blacklisted) {
                         const terms =
@@ -1486,6 +1576,15 @@
                     showBrowserStatus(
                         "✅ Monitor: Browserdaten übernommen",
                         "success"
+                    );
+                    return;
+                }
+
+                if (response.status === 409 && result.error === "guest_scope") {
+                    finishBrowserEnrichment();
+                    showBrowserStatus(
+                        "🔒 Gast-Token: nur selbst hinzugefügte Inserate",
+                        "warning"
                     );
                     return;
                 }
@@ -1547,6 +1646,12 @@
             browserRouteChangedAt
             && Date.now() - browserRouteChangedAt < 1200
         ) {
+            return;
+        }
+
+        if (!getServerBase()) {
+            finishBrowserEnrichment();
+            showBrowserStatus("⚠ Monitor: Server fehlt – ⚙ → S", "warning");
             return;
         }
 
@@ -1615,18 +1720,21 @@
     }
 
     function positionPanel(panel, info) {
-        const mobileImmowelt =
-            info.portal === "immowelt" &&
+        const mobilePortal =
+            (info.portal === "immowelt" ||
+                info.portal === "immoscout24") &&
             window.matchMedia(
                 "(max-width: 768px)"
             ).matches;
 
         panel.style.right =
-            mobileImmowelt ? "12px" : "18px";
-        panel.style.bottom = mobileImmowelt
-            ? "calc(96px + env(safe-area-inset-bottom, 0px))"
+            mobilePortal ? "12px" : "18px";
+        // Native mobile contact bars are about 80px tall. Leave a small gap
+        // on both portals; Immowelt previously reserved an excessive 96px.
+        panel.style.bottom = mobilePortal
+            ? "calc(84px + env(safe-area-inset-bottom, 0px))"
             : "18px";
-        panel.style.maxWidth = mobileImmowelt
+        panel.style.maxWidth = mobilePortal
             ? "calc(100vw - 24px)"
             : "440px";
     }
@@ -1770,7 +1878,7 @@
 
         settings.textContent = "⚙";
         settings.title =
-            "API-Tokens ändern";
+            "Serveradresse und API-Tokens ändern";
 
         Object.assign(
             settings.style,
@@ -1803,6 +1911,10 @@
         document.body.appendChild(
             panel
         );
+    }
+
+    if (typeof GM_registerMenuCommand === "function") {
+        GM_registerMenuCommand("Monitor-Server einstellen", configureServer);
     }
 
     const initialInfo = portalInfo();
